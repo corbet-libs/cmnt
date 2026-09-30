@@ -36,6 +36,8 @@ same action. Enable global gate provider `cpsd` explicitly in the rulebook.
 
 Compose one physical database per community. Append `storage::SCHEMA` once,
 plus the sibling facade schemas, to the service's complete migration history.
+Run that complete history with `Db::migrate` on every opened `crlt` handle,
+including after a restart, to initialize its in-memory schema registry.
 `LibsqlStorage` and `MemoryStorage` delegate challenge operations to cpsd.
 The membership adapter supplies current enrolment, pins, reserved handle, standing
 and authorized device keys; none is chosen by the presentation. It must revalidate
@@ -66,8 +68,9 @@ Every direct cvld Git dependency is pinned by full revision in Cargo.toml.
 
 Serde/serde_json supply typed views, thiserror redacted errors, Tokio serialization,
 chrono calendar conversion, and tempfile real database fixtures. Tests use the
-real crgs register as well. Selected leaves retain their LGPL linking exception;
-other dependencies have permissive alternatives. The CI-resolved Cargo.lock fixes the complete dependency graph; no leaf code is copied.
+real crgs register as well. cplc retains FSL; selected leaves retain their LGPL
+linking exception. Third-party dependencies have permissive alternatives.
+The CI-resolved Cargo.lock fixes the complete dependency graph; no leaf code is copied.
 
 ## Validation
 

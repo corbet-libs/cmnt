@@ -107,7 +107,7 @@ pub struct CredentialGate {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialClaims {
-    /// Payload format version (1).
+    /// Verified view version (1), not a field in the cplc wire payload.
     pub version: u8,
     /// Canonical community, never a mutable display name.
     pub community: String,

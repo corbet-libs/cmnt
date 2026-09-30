@@ -108,6 +108,8 @@ not implemented by cpsd v1; epoch and expiry limits continue to apply.
 `Storage::challenges` supplies shared atomic leaf state. MemoryStorage and
 LibsqlStorage wrap cpsd's real implementations, not duplicate replay logic.
 SCHEMA is the cpsd challenge DDL; append it once to the service migration list.
+Run the complete migration history on each opened crlt handle, including after
+restart; this also registers the schema used by crlt's query enforcement.
 Only outstanding random nonces, request digests and deadlines persist. The primary
 key and expiry index lead with community_id, scoped as cpsd/<hex community bytes>.
 Successful consumption deletes the row; prune removes expired rows. Capacity is
