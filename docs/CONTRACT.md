@@ -130,3 +130,9 @@ pin without a proven spent token. Positive extension/spend integration remains
 blocked on the leaf proof work. This facade has no production test gate; cglb's
 explicit development feature is absent from release builds and refused in
 production mode. Test fixtures are compiled only into integration test binaries.
+
+For a running service, `refresh_passport_policy` also replaces the authenticated
+configuration deadline after the service verifies a fresh signed global status.
+It rejects expired deadlines and epoch rollback, serializes with issuance and
+invalidates challenges bound to the previous configuration. The service retains
+durable public revision/epoch floors and authorizes issuer-key installation.

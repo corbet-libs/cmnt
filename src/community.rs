@@ -515,6 +515,36 @@ where
         Ok(())
     }
 
+    /// Refresh authenticated global metadata and its transport freshness deadline.
+    /// The service verifies the signed status and durable revision/epoch floors
+    /// before this call. Existing challenges bind to the old configuration and
+    /// are invalidated when it changes. Issuer-key installation remains explicit.
+    pub async fn refresh_passport_policy(
+        &self,
+        passport: PassportPolicy,
+        valid_until: u64,
+        now: u64,
+    ) -> Result<()> {
+        check_time(now)?;
+        if valid_until <= now
+            || valid_until >= cpsd::TIME_LIMIT
+            || passport.valid_until <= now
+            || passport.valid_until >= cpsd::TIME_LIMIT
+            || !passport.valid_until.is_multiple_of(86_400)
+            || passport.gates.is_empty()
+        {
+            return Err(Error::Policy);
+        }
+        let _policy = self.policy.lock().await;
+        let mut config = self.config.write().map_err(|_| Error::Policy)?;
+        if passport.epoch < config.passport.epoch {
+            return Err(Error::Policy);
+        }
+        config.passport = passport;
+        config.valid_until = valid_until;
+        Ok(())
+    }
+
     /// Delete expired anonymous outstanding challenges.
     pub async fn prune(&self, now: u64) -> Result<u64> {
         check_time(now)?;

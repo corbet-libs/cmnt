@@ -70,3 +70,9 @@ policy distribution and rate limits. Offline consumers need current epochs and
 revocations in addition to signature verification.
 
 Licensed under the [Functional Source License](LICENSE.md).
+
+For a running service, `refresh_passport_policy` also replaces the authenticated
+configuration deadline after the service verifies a fresh signed global status.
+It rejects expired deadlines and epoch rollback, serializes with issuance and
+invalidates challenges bound to the previous configuration. The service retains
+durable public revision/epoch floors and authorizes issuer-key installation.

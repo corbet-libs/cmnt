@@ -1116,3 +1116,39 @@ async fn global_suspension_prevents_a_real_holder_from_renewing_in_the_community
             .is_err()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn authenticated_refresh_extends_freshness_and_invalidates_old_challenges() {
+    let mut f = fixture(EXPIRY, NOW + 120).await;
+    let (old, proof) = f.proof().await;
+    let passport = f.engine.snapshot(NOW).await.unwrap().passport;
+    f.engine
+        .refresh_passport_policy(passport.clone(), NOW + 86_400, NOW)
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.finish(&old, &proof, NOW).await,
+        Err(Error::Policy)
+    ));
+    assert!(
+        f.engine
+            .refresh_passport_policy(passport.clone(), NOW, NOW)
+            .await
+            .is_err()
+    );
+    let mut rollback = passport;
+    rollback.epoch = 0;
+    assert!(
+        f.engine
+            .refresh_passport_policy(rollback, NOW + 86_400, NOW)
+            .await
+            .is_err()
+    );
+    f.clock
+        .0
+        .store((NOW + 121) as i64, std::sync::atomic::Ordering::SeqCst);
+    let result = issued(f.issue().await);
+    let ring = f.engine.snapshot(NOW + 121).await.unwrap().signing_keys;
+    ring.verify(&result.cose, csgn::Kind::Credential, NOW + 121)
+        .unwrap();
+}
