@@ -15,10 +15,10 @@ crgs = { git = "https://github.com/corbet-foss/crgs", rev = "b8f58b2bce71b5af5c9
 clbs = { git = "https://github.com/corbet-foss/clbs", rev = "2eeefb351484aadf430cd12083e0f198cde6a5b2" }
 cpns = { git = "https://github.com/corbet-foss/cpns", rev = "23968a9fa338791e70078c6070a6f1f3cf185ff7" }
 cpky = { git = "https://github.com/corbet-foss/cpky", rev = "e0bea9b1a6425fe17b65257e747d2c4621078845" }
-cmbr = { git = "https://github.com/corbet-libs/cmbr", rev = "6057c773190f23dc979effbfc4f4b666030cbfb4" }
+cmbr = { git = "https://github.com/corbet-libs/cmbr", rev = "f3508812594b34515c990446d8f27b2bb7d2b4c7" }
 cgts = { git = "https://github.com/corbet-libs/cgts", rev = "ef70f442d41041ad98f91cf8bc8041d17706c630" }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
-cplc = { git = "https://github.com/corbet-libs/cplc", rev = "3a9416190ac688f6984ca67ea5e96b9c13b57c93" }
+cplc = { git = "https://github.com/corbet-libs/cplc", rev = "130dc7df2d3de3dfc0e606e8bb7416230907f7d5" }
 tokio = { version = "1", features = ["sync", "time"] }
 crlt = { git = "https://github.com/corbet-foss/crlt", rev = "6b94dacd7fa04aa8847c62c6471a1fc5c0f6c9dc" }
 cpsd = { git = "https://github.com/corbet-foss/cpsd", rev = "b60f2bbff04dbe0a93cb41992006b06dafc798c3" }

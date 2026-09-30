@@ -875,7 +875,7 @@ dependencies = [
 [[package]]
 name = "cmbr"
 version = "0.0.0"
-source = "git+https://github.com/corbet-libs/cmbr?rev=6057c773190f23dc979effbfc4f4b666030cbfb4#6057c773190f23dc979effbfc4f4b666030cbfb4"
+source = "git+https://github.com/corbet-libs/cmbr?rev=f3508812594b34515c990446d8f27b2bb7d2b4c7#f3508812594b34515c990446d8f27b2bb7d2b4c7"
 dependencies = [
  "cgrd",
  "cgts",
@@ -1044,7 +1044,7 @@ dependencies = [
 [[package]]
 name = "cplc"
 version = "0.0.0"
-source = "git+https://github.com/corbet-libs/cplc?rev=3a9416190ac688f6984ca67ea5e96b9c13b57c93#3a9416190ac688f6984ca67ea5e96b9c13b57c93"
+source = "git+https://github.com/corbet-libs/cplc?rev=130dc7df2d3de3dfc0e606e8bb7416230907f7d5#130dc7df2d3de3dfc0e606e8bb7416230907f7d5"
 dependencies = [
  "cgts",
  "cpsd",
