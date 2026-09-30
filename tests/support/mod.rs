@@ -3,7 +3,11 @@ use std::sync::{
     atomic::{AtomicI64, Ordering},
 };
 
-use cmnt::{adapters::SharedRulebook, storage::Storage, *};
+use cmnt::{
+    adapters::SharedRulebook,
+    storage::{self, Storage},
+    *,
+};
 use cpsd::{
     rand::{SeedableRng, rngs::StdRng},
     *,

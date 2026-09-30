@@ -1038,7 +1038,11 @@ async fn global_suspension_prevents_a_real_holder_from_renewing_in_the_community
     issued(f.issue().await);
     let (old_challenge, old_proof) = f.proof().await;
     global
-        .suspend(&who, cglb::Suspension::Permanent, NOW)
+        .suspend(
+            &who,
+            cglb::Suspension::Permanent(cglb::PermanentReason::SelfBan),
+            NOW,
+        )
         .await
         .unwrap();
     let signed_status = global.signed_status(NOW, NOW + 86_400).await.unwrap();

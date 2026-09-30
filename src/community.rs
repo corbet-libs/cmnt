@@ -29,6 +29,11 @@ impl Challenge {
 
 /// A consumed, verified passport presentation. No raw proof is retained.
 /// Use it immediately to bind a first registration to its community pseudonym.
+///
+/// ```compile_fail
+/// let raw: cpsd::Pseudonym = todo!();
+/// let verified: cmnt::VerifiedPassport = raw.into();
+/// ```
 pub struct VerifiedPassport {
     member_id: String,
     witness: cgts::VerifiedPassport,
