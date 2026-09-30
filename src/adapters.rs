@@ -6,6 +6,42 @@ use tokio::sync::Mutex;
 
 use crate::{ports, *};
 
+/// Cloneable handle to one actual rulebook store. Use clones for cplc and cmnt
+/// so both read the same revisions, including with crbk's non-Clone memory store.
+pub struct SharedRulebook<R>(std::sync::Arc<R>);
+
+impl<R> SharedRulebook<R> {
+    /// Own one store; cloning this handle shares rather than copies its state.
+    pub fn new(store: R) -> Self {
+        Self(std::sync::Arc::new(store))
+    }
+}
+
+impl<R> Clone for SharedRulebook<R> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<R: crbk::Storage> crbk::Storage for SharedRulebook<R> {
+    async fn load(
+        &self,
+        community: &str,
+        selection: crbk::Selection,
+    ) -> crbk::Result<Option<crbk::Revision>> {
+        self.0.load(community, selection).await
+    }
+
+    async fn append(
+        &self,
+        community: &str,
+        expected: Option<u64>,
+        change: crbk::Change,
+    ) -> crbk::Result<crbk::Revision> {
+        self.0.append(community, expected, change).await
+    }
+}
+
 /// Policy adapter over cplc's actual durable issuer. The rulebook handle must
 /// share the exact state used by the inner cplc policy, not an independent copy.
 pub struct CplcPolicy<R, S, K> {

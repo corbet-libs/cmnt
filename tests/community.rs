@@ -93,6 +93,30 @@ async fn lifetime_adapts_to_gate_policy_and_passport_expiry() {
 }
 
 #[tokio::test]
+async fn authentic_short_passport_caps_credential_and_tightens_challenge() {
+    let mut f = fixture_with_expiry(MemoryStorage::new(scope(), 8).unwrap(), NOW + 40).await;
+    let (challenge, proof) = f.proof().await;
+    assert_eq!(challenge.request().now(), NOW + 39);
+    let outcome = f
+        .engine
+        .finish(&mut f.rng, &challenge, &proof, NOW)
+        .await
+        .unwrap();
+    assert_eq!(issued(outcome).claims.valid_until, NOW + 40);
+
+    let mut f = fixture_with_expiry(MemoryStorage::new(scope(), 8).unwrap(), NOW + 1).await;
+    assert!(matches!(
+        f.engine.begin(&mut f.rng, NOW).await,
+        Err(Error::Time)
+    ));
+    f.policies.snapshot.lock().await.valid_until = NOW;
+    assert!(matches!(
+        f.engine.begin(&mut f.rng, NOW).await,
+        Err(Error::Policy)
+    ));
+}
+
+#[tokio::test]
 async fn missing_gate_disabled_provider_and_unknown_action_return_lobby_reasons() {
     let mut f = memory().await;
     f.gates.report.lock().await.results.clear();
@@ -423,7 +447,7 @@ async fn real_libsql_runs_the_same_admission_and_rejects_replay_after_reopen() {
 async fn ready_cplc_issues_real_credentials_and_caps_at_policy_freshness() {
     use cmnt::ports::Policy;
     let mut f = memory().await;
-    let rules = crbk::MemoryStore::default();
+    let rules = adapters::SharedRulebook::new(crbk::MemoryStore::default());
     let signer = csgn::PersistentSigner::create(
         csgn::MemoryStore::default(),
         "example",

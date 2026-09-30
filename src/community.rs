@@ -29,7 +29,8 @@ impl Challenge {
 }
 
 /// Community facade with fixed, service-authorized component capabilities.
-/// Membership, gates and policy are ports until their facade APIs are available.
+/// Membership and gatekeeping use ports while upstream dependency pins align;
+/// the ready cplc adapter is provided in `adapters`.
 pub struct Community<S: Storage, M, G, P> {
     community: CommunityId,
     verifier: Verifier<S::Challenges>,

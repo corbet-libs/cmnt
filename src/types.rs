@@ -34,7 +34,7 @@ pub struct Member {
     pub state: crbk::MembershipState,
     /// Trusted standing; renewal alone never changes it.
     pub standing: Standing,
-    /// Opaque revision for atomic admission against unchanged membership.
+    /// Opaque revision for stale-member comparison before admission.
     pub revision: u64,
     /// Sealed field fingerprints only; never values or salts.
     pub pins: BTreeMap<String, [u8; 32]>,

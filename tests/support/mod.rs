@@ -196,6 +196,10 @@ impl Policy for Policies {
 }
 
 pub async fn fixture<S: Storage>(storage: S) -> Fixture<S> {
+    fixture_with_expiry(storage, EXPIRY).await
+}
+
+pub async fn fixture_with_expiry<S: Storage>(storage: S, expiry: u64) -> Fixture<S> {
     let mut rng = StdRng::seed_from_u64(42);
     let gate = GateId::new("global-test").unwrap();
     let issuer = IssuerKey::generate(
@@ -208,7 +212,7 @@ pub async fn fixture<S: Storage>(storage: S) -> Fixture<S> {
     let challenge = IssuanceChallenge::generate(&mut rng);
     let (request, pending) =
         request_issue(&mut rng, &secret, issuer.public_key(), &challenge).unwrap();
-    let attributes = PassportAttributes::new(EXPIRY, 7).with_gate(gate.clone(), EXPIRY);
+    let attributes = PassportAttributes::new(expiry, 7).with_gate(gate.clone(), expiry);
     let blind = issuer
         .issue_blind(&mut rng, &request, &challenge, &attributes)
         .unwrap();
@@ -269,7 +273,7 @@ pub async fn fixture<S: Storage>(storage: S) -> Fixture<S> {
                 subject: id,
                 community: Some("example".into()),
                 provider: "test-only".into(),
-                valid_until: EXPIRY as i64,
+                valid_until: expiry as i64,
                 proven_at: None,
             }],
             veto: false,
@@ -353,10 +357,10 @@ pub async fn fixture<S: Storage>(storage: S) -> Fixture<S> {
             schema_version: 3,
             passport: PassportPolicy {
                 epoch: 7,
-                valid_until: EXPIRY,
+                valid_until: expiry,
                 gates: [gate].into(),
             },
-            valid_until: EXPIRY,
+            valid_until: expiry,
             signing_keys: signer.key_ring().unwrap().clone(),
         })),
         signer: Arc::new(Mutex::new(signer)),
