@@ -8,9 +8,27 @@ license = "FSL-1.1-ALv2"
 repository = "https://github.com/corbet-libs/cmnt"
 readme = "README.md"
 publish = false
-include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md"]
+include = ["Cargo.toml", "src/**", "docs/**", "README.md", "LICENSE.md"]
 
 [dependencies]
+crlt = { git = "https://github.com/corbet-foss/crlt", rev = "9c076b1e4050529406df27533e12c8e0dd1fc0db" }
+cpsd = { git = "https://github.com/corbet-foss/cpsd", rev = "5aa7580b26faf10fe7f18bb041b08b5c50f49278" }
+crbk = { git = "https://github.com/corbet-foss/crbk", rev = "0eff64915dbeab0a725a8b1c0ad9061ae7d83976" }
+csgn = { git = "https://github.com/corbet-foss/csgn", rev = "d7203f310c3c129c3f67ef4ef3e34ccf0ae8c93b", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+csgn = { git = "https://github.com/corbet-foss/csgn", rev = "d7203f310c3c129c3f67ef4ef3e34ccf0ae8c93b", features = ["signer"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
 
 [lints.rust]
 unsafe_code = "forbid"
