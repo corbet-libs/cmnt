@@ -394,7 +394,7 @@ async fn changed_policy_schema_key_and_epoch_require_new_challenges() {
                             crbk::Change {
                                 rulebook: f.rules.clone(),
                                 announced_at: NOW as i64,
-                                effective_at: NOW as i64,
+                                effective_at: (NOW + 1) as i64,
                                 notice_seconds: 0,
                                 policy_epoch: 2,
                             },
@@ -404,8 +404,9 @@ async fn changed_policy_schema_key_and_epoch_require_new_challenges() {
                 }
             }
         }
+        let at = if change == 3 { NOW + 1 } else { NOW };
         assert!(matches!(
-            f.finish(&challenge, &proof, NOW).await,
+            f.finish(&challenge, &proof, at).await,
             Err(Error::Policy)
         ));
     }
@@ -701,13 +702,16 @@ async fn disabled_provider_missing_action_and_global_proof_age_return_lobby_reas
                 crbk::Change {
                     rulebook: rules,
                     announced_at: NOW as i64,
-                    effective_at: NOW as i64,
+                    effective_at: (NOW + 1) as i64,
                     notice_seconds: 0,
                     policy_epoch: 2,
                 },
             )
             .await
             .unwrap();
+        f.clock
+            .0
+            .store((NOW + 1) as i64, std::sync::atomic::Ordering::SeqCst);
         assert!(matches!(f.issue().await, Outcome::Missing(_)));
         assert_eq!(
             f.engine
@@ -744,10 +748,21 @@ async fn competing_signer_fences_issuance_and_consumes_the_presentation() {
         f.finish(&challenge, &proof, NOW).await,
         Err(Error::Policy) | Err(Error::Signing)
     ));
-    assert!(matches!(
-        f.finish(&challenge, &proof, NOW).await,
-        Err(Error::Passport)
-    ));
+    // The fenced policy itself cannot serve another attempt. Check consumption
+    // using a fresh real verifier on the same persistent challenge capability.
+    assert!(f.finish(&challenge, &proof, NOW).await.is_err());
+    let store = storage::LibsqlStorage::new(&f.db, scope(), 32).unwrap();
+    let verifier = cpsd::Verifier::new(
+        storage::Storage::challenges(&store),
+        vec![f.passport.issuer().clone()],
+    )
+    .unwrap();
+    assert!(
+        verifier
+            .verify(&mut f.rng, challenge.request(), &proof, 7, NOW)
+            .await
+            .is_err()
+    );
     assert_eq!(
         f.engine
             .membership()
@@ -995,7 +1010,7 @@ async fn global_suspension_prevents_a_real_holder_from_renewing_in_the_community
             csgn::Kind::SettingsSnapshot,
             &serde_json::to_vec(&policy).unwrap(),
             NOW,
-            expiry,
+            expiry + 86_400,
         )
         .await
         .unwrap();
