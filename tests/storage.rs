@@ -1,3 +1,5 @@
+//! Shared storage contracts against memory, local libSQL, and optional Turso.
+
 use cmnt::{Error, storage::*};
 use cpsd::{ChallengeRecord, ChallengeStore, CommunityId};
 
@@ -71,6 +73,9 @@ async fn namespaces_reopen_capacity_and_missing_schema_fail_closed() {
         Err(cpsd::Error::StorageCapacity)
     );
     let db2 = crlt::Db::open(crlt::Config::new(url, "")).await.unwrap();
+    db2.migrate(&[crlt::Migration::new(1, "challenges", SCHEMA)])
+        .await
+        .unwrap();
     let c = LibsqlStorage::new(&db2, scope("a"), 1)
         .unwrap()
         .challenges();

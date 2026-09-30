@@ -1,3 +1,5 @@
+//! Admission round trips and failure boundaries using real cryptographic leaves.
+
 mod support;
 
 use std::sync::atomic::Ordering;
@@ -428,6 +430,9 @@ async fn real_libsql_runs_the_same_admission_and_rejects_replay_after_reopen() {
     drop(f.engine);
     drop(db);
     let db = crlt::Db::open(crlt::Config::new(url, "")).await.unwrap();
+    db.migrate(&[crlt::Migration::new(1, "challenges", storage::SCHEMA)])
+        .await
+        .unwrap();
     let engine = Community::new(
         storage::LibsqlStorage::new(&db, scope(), 32).unwrap(),
         vec![f.passport.issuer().clone()],
