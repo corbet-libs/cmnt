@@ -389,6 +389,9 @@ where
         let schema_version = schema.version;
         let mut pins = Vec::new();
         for field in schema.public.iter().chain(&schema.private) {
+            if field.change_preset == cplc::cshm::ChangePreset::Free {
+                continue;
+            }
             if let Some(pin) = self
                 .membership
                 .get_pin(auth, &field.id)

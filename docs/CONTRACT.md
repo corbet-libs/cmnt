@@ -136,3 +136,8 @@ configuration deadline after the service verifies a fresh signed global status.
 It rejects expired deadlines and epoch rollback, serializes with issuance and
 invalidates challenges bound to the previous configuration. The service retains
 durable public revision/epoch floors and authorizes issuer-key installation.
+
+Credential assembly includes seals only for fields whose current change preset
+is restricted. Loosening a field to Free does not prevent renewal; its previous
+stored seal is retained for a later tightening and omitted from the Free-field
+credential.

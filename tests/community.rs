@@ -1152,3 +1152,40 @@ async fn authenticated_refresh_extends_freshness_and_invalidates_old_challenges(
     ring.verify(&result.cose, csgn::Kind::Credential, NOW + 121)
         .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn loosening_a_pinned_field_allows_renewal_and_preserves_later_tightening() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    assert_eq!(issued(f.issue().await).claims.pins.len(), 1);
+    let mut free = schema(4);
+    free.public[0].change_preset = cplc::cshm::ChangePreset::Free;
+    f.engine
+        .policy()
+        .lock()
+        .await
+        .set_schema(free)
+        .await
+        .unwrap();
+    let renewed = issued(f.issue().await);
+    assert_eq!(renewed.claims.schema_version, 4);
+    assert!(renewed.claims.pins.is_empty());
+    assert!(
+        f.engine
+            .membership()
+            .get_pin(&f.auth.authentication, "restricted-field")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    f.engine
+        .policy()
+        .lock()
+        .await
+        .set_schema(schema(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        issued(f.issue().await).claims.pins["restricted-field"],
+        f.fingerprint
+    );
+}
