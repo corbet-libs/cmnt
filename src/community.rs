@@ -480,7 +480,7 @@ where
                 .await
                 .map_err(|_| Error::Policy)?;
             policy
-                .publish(cplc::SnapshotKind::Revocations, now)
+                .publish(cplc::SnapshotKind::RevocationList, now)
                 .await
                 .map_err(|_| Error::Policy)?;
             for event in &events {

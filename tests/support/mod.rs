@@ -258,7 +258,7 @@ pub async fn policies(db: &crlt::Db, rules: crbk::Rulebook) -> (Policies, Rules)
                 announced_at: NOW as i64,
                 effective_at: NOW as i64,
                 notice_seconds: 0,
-                policy_epoch: 19,
+                policy_epoch: 1,
             },
         )
         .await
@@ -376,7 +376,7 @@ pub async fn fixture_with_identity<S: Storage>(
             300_000,
         )
         .unwrap();
-    let credential_id = response.raw_id.clone();
+    let credential_id: cpky::CredentialID = response.raw_id.clone().into();
     engine
         .membership()
         .finish_registration(pending, response)

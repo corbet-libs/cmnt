@@ -147,7 +147,7 @@ async fn lifetime_adapts_to_gate_policy_passport_and_scheduled_revision() {
                 announced_at: NOW as i64,
                 effective_at: (NOW + 120) as i64,
                 notice_seconds: 120,
-                policy_epoch: 20,
+                policy_epoch: 2,
             },
         )
         .await
@@ -396,7 +396,7 @@ async fn changed_policy_schema_key_and_epoch_require_new_challenges() {
                                 announced_at: NOW as i64,
                                 effective_at: NOW as i64,
                                 notice_seconds: 0,
-                                policy_epoch: 20,
+                                policy_epoch: 2,
                             },
                         )
                         .await
@@ -703,7 +703,7 @@ async fn disabled_provider_missing_action_and_global_proof_age_return_lobby_reas
                     announced_at: NOW as i64,
                     effective_at: NOW as i64,
                     notice_seconds: 0,
-                    policy_epoch: 20,
+                    policy_epoch: 2,
                 },
             )
             .await
@@ -801,7 +801,7 @@ async fn revocation_publication_precedes_acknowledgement_and_fences_existing_cre
     );
     assert!(
         policy
-            .published(cplc::SnapshotKind::Revocations, NOW)
+            .published(cplc::SnapshotKind::RevocationList, NOW)
             .await
             .unwrap()
             .is_some()
@@ -933,7 +933,7 @@ async fn global_suspension_prevents_a_real_holder_from_renewing_in_the_community
         ) -> cglb::Result<cglb::GateEvidence> {
             Ok(cglb::GateEvidence {
                 valid_until: NOW + 20 * 86_400,
-                uniqueness: None,
+                uniqueness: Some(b"synthetic-normalized-phone".to_vec().into()),
             })
         }
     }
@@ -987,7 +987,7 @@ async fn global_suspension_prevents_a_real_holder_from_renewing_in_the_community
         gates: vec![cglb::GatePolicy {
             gate: "global-test".into(),
             provider: "external".into(),
-            uniqueness: false,
+            uniqueness: true,
         }],
     };
     let signed = authority
