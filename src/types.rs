@@ -38,6 +38,8 @@ pub struct Member {
     pub revision: u64,
     /// Sealed field fingerprints only; never values or salts.
     pub pins: BTreeMap<String, [u8; 32]>,
+    /// Authorized public device keys, from the member's authenticated session.
+    pub devices: Vec<[u8; 32]>,
 }
 
 /// Authenticated common-expiry passport policy from the global level.
@@ -62,7 +64,7 @@ pub struct PolicySnapshot {
     pub passport: PassportPolicy,
     /// Freshness deadline for these settings/schema, exclusive.
     pub valid_until: u64,
-    /// Trusted community ring; issuer must be `cmnt:<community>`.
+    /// Trusted community ring; issuer must equal the canonical community.
     pub signing_keys: csgn::KeyRing,
 }
 
@@ -100,8 +102,8 @@ pub struct CredentialGate {
     pub valid_until: u64,
 }
 
-/// Version-one JSON payload inside Ed25519 COSE_Sign1 from `cplc`/`csgn`.
-/// Issuer, key ID and times must agree with the protected COSE metadata.
+/// Verified view of the cplc payload plus protected COSE metadata.
+/// This view is not the wire payload: cplc owns that format.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialClaims {
@@ -117,6 +119,8 @@ pub struct CredentialClaims {
     pub gates: Vec<CredentialGate>,
     /// Sealed field fingerprints only.
     pub pins: BTreeMap<String, [u8; 32]>,
+    /// Authorized public device keys.
+    pub devices: Vec<[u8; 32]>,
     /// Schema version.
     pub schema_version: u64,
     /// Community policy epoch.
@@ -137,6 +141,40 @@ pub struct IssuedCredential {
     pub cose: Vec<u8>,
 }
 
+impl CredentialClaims {
+    /// The canonical cplc JSON payload, excluding authenticated COSE headers.
+    pub fn payload(&self) -> crate::Result<cplc::Credential> {
+        Ok(cplc::Credential {
+            community: self.community.clone(),
+            member: self.member_id.clone(),
+            handle: self.handle.clone(),
+            schema_version: self
+                .schema_version
+                .try_into()
+                .map_err(|_| crate::Error::Policy)?,
+            policy_epoch: self.policy_epoch,
+            gates: self
+                .gates
+                .iter()
+                .map(|gate| cplc::CredentialGate {
+                    gate: gate.gate.clone(),
+                    provider: gate.provider.clone(),
+                    valid_until: gate.valid_until,
+                })
+                .collect(),
+            pins: self
+                .pins
+                .iter()
+                .map(|(field, fingerprint)| cplc::Pin {
+                    field: field.clone(),
+                    fingerprint: *fingerprint,
+                })
+                .collect(),
+            devices: self.devices.clone(),
+        })
+    }
+}
+
 /// Gate/rulebook refusal, or a signed credential.
 pub enum Outcome {
     /// Resume the lobby with the rulebook's missing requirements.
@@ -149,7 +187,7 @@ pub enum Outcome {
 
 pub(crate) fn community_text(community: &CommunityId) -> crate::Result<&str> {
     let value = std::str::from_utf8(community.as_bytes()).map_err(|_| crate::Error::Scope)?;
-    if value.contains('\0') || value.len() + "cmnt:".len() > csgn::MAX_ISSUER_LEN {
+    if value.contains('\0') || value.len() > csgn::MAX_ISSUER_LEN {
         return Err(crate::Error::Scope);
     }
     Ok(value)

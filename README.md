@@ -19,56 +19,64 @@ request history, raw gates, profile values and pin salts are never stored here.
 
 ## Integration
 
-- Implement `ports::Membership`, `Gatekeeping` and `Policy` over `cmbr`, `cgts`
-  and `cplc`. Their main branches were scaffolds at the initial survey; do not
-  substitute a permissive production adapter. Membership owns enrolment,
-  passkeys, handles, pins, standing and coarse leases. Policy owns schema and keys.
-- Supply authenticated issuer keys, policy/epoch snapshots and authoritative
-  Unix seconds. Use an immutable UTF-8 community ID. Bind the holder exchange
-  to the authenticated community session at the service boundary; rate-limit it.
-- Keep the opaque `Challenge` on the server until completion; send only
-  `challenge.request().to_bytes()` to the holder. It has no member identifier.
-  A restart requires a fresh challenge. Call `prune` for expired challenges.
-- Compose one `crlt::Db` per community, append `storage::SCHEMA` once to the
-  complete service migration history, and construct `storage::LibsqlStorage`.
-  `MemoryStorage` supplies the same leaf semantics for development/tests.
-- `Policy::sign` delegates to `csgn::PersistentSigner` through `cplc`, checks
-  the expected revision/key and signs JSON `CredentialClaims`. This facade
-  verifies the returned signature, payload, key ID and protected times.
+Use `adapters::CmbrMembership` for a real passkey-authenticated cmbr session,
+`CgtsGatekeeping` for typed cgts checks/retained proofs and the legal veto, and
+`CplcPolicy` for the actual cplc rulebook/schema/durable issuer. Narrow traits in
+`ports` also support service-specific adapters. These are trusted capabilities,
+never types to deserialize straight from an HTTP request.
 
-The admission action is always `community.admit`. Global proof metadata uses
-provider label `cpsd`; the rulebook must enable that gate/provider explicitly.
-Global provider verification remains the global issuer's responsibility. No
-individual global expiry or provider identifier is disclosed by the passport.
+The service supplies canonical community routing, authenticated issuer keys,
+global epoch policy, a trusted clock, rate limits and session/device authorization.
+Keep `Challenge` on the server; send only `challenge.request().to_bytes()` to the
+holder. On restart obtain a new challenge. Call `prune` for expired challenges.
+The admission action is always `community.admit`; configure cmbr/cplc with that
+same action. Enable global gate provider `cpsd` explicitly in the rulebook.
+
+Compose one physical database per community. Append `storage::SCHEMA` once,
+plus the sibling facade schemas, to the service's complete migration history.
+`LibsqlStorage` and `MemoryStorage` delegate challenge operations to cpsd.
+`CmbrMembership` loads current pins and enrolment from cmbr, compares them before
+admission and delegates coarse lease extension. Its service-approved session
+metadata includes reserved handle, standing, restricted field IDs and public
+device keys; none is chosen by the presentation. Serialize membership, policy
+and gate changes with complete issuance, across processes as well as tasks.
+
+`CplcPolicy` uses the same rulebook store as its inner cplc instance. It checks
+current epoch/schema/key again under its writer mutex, then calls `cplc::issue`.
+cmnt verifies the returned COSE and matches its cplc payload and protected
+metadata. `CredentialClaims` is a convenient verified view, not a second wire
+format. The wire payload is `cplc::Credential`; issued/expiry/key ID are protected
+COSE headers. No arbitrary-payload signing endpoint is exposed by cmnt.
 
 ## Dependency survey
 
-Checked crates.io documentation and GitHub sources before implementation on
-2026-09-30. Every cvld Git dependency is pinned by full revision in Cargo.toml.
+Checked crates.io documentation and GitHub sources on 2026-09-30 before writing.
+Every direct cvld Git dependency is pinned by full revision in Cargo.toml.
 
 | Candidate | Choice and reason |
 |---|---|
-| [cmbr](https://github.com/corbet-libs/cmbr), [cgts](https://github.com/corbet-libs/cgts), [cplc](https://github.com/corbet-libs/cplc) | Intended composition owners. Initially no callable implementation or contract on main; narrow local ports document their exact obligations. No placeholder Git dependencies. |
-| [cpsd](https://github.com/corbet-foss/cpsd) | Selected BBS passport verification, pseudonyms and atomic replay protection; use its shared-epoch profile and existing storage implementations. No crypto or challenge algorithms copied. |
-| [crlt](https://github.com/corbet-foss/crlt), [official libsql](https://docs.rs/libsql/) | crlt already supplies scoped transactions, migrations and index enforcement. Use its ready Git API, not the direct-driver fallback. Pin `9c076b1` to match cpsd/crbk types; the subsequent main commit `6b94dac` changes only a query-plan test. |
-| [crbk](https://github.com/corbet-foss/crbk) | Selected rulebook snapshot/types/evaluation behind the policy port; no local all/any/threshold or provider-switch engine. |
-| [csgn](https://github.com/corbet-foss/csgn) | Selected verification of policy-issued COSE credentials. Production signing remains behind `Policy`; the real persistent signer is used in integration tests. |
-| [Casbin](https://github.com/apache/casbin-rs), [Cedar](https://github.com/cedar-policy/cedar) | Maintained general authorization engines; unnecessary beside the already implemented crbk vocabulary, and do not compose anonymous passports or community enrolment. |
-| [coset](https://github.com/google/coset), [ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) | Maintained COSE/Ed25519 primitives already owned by csgn. No direct dependency or parallel signing implementation. |
-| [cvch](https://github.com/corbet-foss/cvch) | Existing voucher library belongs behind cgts. Surveyed main has no Rust Cargo.toml or docs/CONTRACT.md; cmnt does not invent voucher execution. A development-only test gate lives in the test harness. |
+| [cmbr](https://github.com/corbet-libs/cmbr), [cgts](https://github.com/corbet-libs/cgts), [cplc](https://github.com/corbet-libs/cplc) | Initially scaffolds; usable APIs landed during implementation. Selected pinned Git dependencies with concrete adapters. Their leaves execute membership, gates, policy and signing. |
+| [cpsd](https://github.com/corbet-foss/cpsd) | Selected BBS verification, community pseudonyms and atomic replay protection. Use its shared-epoch profile and storage, without copying challenge/crypto logic. |
+| [crlt](https://github.com/corbet-foss/crlt), [official libsql](https://docs.rs/libsql/) | crlt already supplies scoped transactions, migrations and index enforcement. No direct-driver fallback. Match cpsd/crbk's `9c076b1` type; newer facades use `6b94dac`, whose source difference is a query-plan test. |
+| [crbk](https://github.com/corbet-foss/crbk), [csgn](https://github.com/corbet-foss/csgn) | Reuse policy types/evaluation and COSE verification. No local policy evaluator, signature engine or key store. |
+| [Casbin](https://github.com/apache/casbin-rs), [Cedar](https://github.com/cedar-policy/cedar) | Maintained general authorization engines; redundant with crbk and do not supply passport/community composition. |
+| [coset](https://github.com/google/coset), [ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) | Maintained primitives already owned by csgn. No parallel signing implementation. |
+| [cvch](https://github.com/corbet-foss/cvch) | Existing voucher execution is reached through cgts's Rust adapter; no second voucher implementation. Its standalone contract file is absent at the surveyed revision. |
 
-Serde/serde_json supply the versioned payload, thiserror static errors, and
-Tokio/tempfile the test runner and real local databases. Leaves retain their
-LGPL linking exception; other dependencies use permissive alternatives. No
-GPL-only or AGPL-only dependency is intentionally selected.
+Serde/serde_json supply typed views, thiserror redacted errors, Tokio serialization,
+chrono calendar conversion, and tempfile real database fixtures. Tests use the
+real crgs register as well. Selected leaves retain their LGPL linking exception;
+other dependencies have permissive alternatives. Transitive balance Git leaves
+are pinned with source patches, without copying or changing their code.
 
 ## Validation
 
-GitHub Actions runs stable Rust `cargo fmt --check`,
-`cargo clippy --all-targets -- -D warnings`, and `cargo test`. Cargo must not run
-on the workstation. Integration tests use real BBS issuance/presentation,
-rulebook decisions, COSE signatures and local libSQL storage; no cmnt decision
-or cryptographic path is mocked. The development gate is compiled only in tests.
+GitHub Actions runs stable `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, and `cargo test`. No Cargo command
+runs on the workstation. Tests use real BBS issuance/presentation, crgs,
+crbk, COSE, cgts/cplc adapters and local libSQL. Failure fixtures exercise external
+ports; cmnt decisions, cryptography and database operations are never mocked.
+Always-pass gates exist only in test binaries.
 
 The optional Turso test returns without connecting unless both `TURSO_URL` and
 `TURSO_TOKEN` are nonempty. Supply only a disposable test database on an
@@ -76,13 +84,19 @@ authorized runner; credentials belong neither in this repository nor in CI.
 
 ## Current limits
 
-Facade-port adapters remain required until cmbr/cgts/cplc expose compatible APIs.
-The host serializes membership/policy changes with issuance; the ports must
-compare revisions, and admission plus signing is not a distributed transaction.
-An ambiguous failure releases no credential; obtain a new challenge and reconcile
-membership state. Individual early global revocation awaits cpsd accumulators;
-current protection is authenticated epochs and expiry. No browser requirement
-applies to this server facade.
+- cplc currently has no explicit issuance-expiry ceiling. `CplcPolicy` requires
+  at least one verified global gate and conservatively shortens that transient
+  assertion to the community lifetime bound. It never fabricates a gate or
+  extends an expiry. A gate-free passport policy is refused by this adapter.
+- Upstream crlt pins differ, so cpsd/crbk and newer facade concrete stores need
+  matching Rust handles to the **same physical database**. Align upstream pins
+  before claiming one shared pool for every leaf.
+- Membership plus signing is not one transaction. Serialize service writers.
+  Failure may leave a committed lease but never returns an unverified credential;
+  obtain a new challenge and reconcile. cmbr's crash recovery contract still applies.
+- Session expiry/device authorization, establishment policy, fresh revocation
+  distribution and immediate individual global revocation remain upstream duties.
+  cpsd currently provides authenticated epochs and expiry, not accumulators.
 
 ## License
 

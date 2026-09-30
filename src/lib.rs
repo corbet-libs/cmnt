@@ -4,6 +4,7 @@
 //! routing and authenticated policy/key distribution. See `docs/CONTRACT.md`.
 #![forbid(unsafe_code)]
 
+pub mod adapters;
 mod community;
 pub mod ports;
 pub mod storage;

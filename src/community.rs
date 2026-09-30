@@ -152,7 +152,7 @@ impl<S: Storage, M: Membership, G: Gatekeeping, P: Policy> Community<S, M, G, P>
         {
             return Err(Error::Membership);
         }
-        let report = self.gates.run(&member, now).await?;
+        let report = self.gates.run(&member, &policy, now).await?;
         if report.veto {
             return Ok(Outcome::Vetoed);
         }
@@ -184,29 +184,35 @@ impl<S: Storage, M: Membership, G: Gatekeeping, P: Policy> Community<S, M, G, P>
         if !decision.allowed {
             return Ok(Outcome::Missing(decision));
         }
-        let claims = self.claims(&policy, &member, &results, now)?;
+        let mut claims = self.claims(&policy, &member, &results, now)?;
         // Commit before publication. On signing failure the lease may already be
         // extended; no credential escapes and standing must remain unchanged.
-        self.membership.admit(&member, claims.valid_until).await?;
+        self.membership
+            .admit(&member, &policy, &results, claims.valid_until)
+            .await?;
         let current = self.policy.snapshot(now).await?;
         self.validate_policy(&current, now)?;
         if !policy.unchanged(&current) {
             return Err(Error::Policy);
         }
-        let cose = self.policy.sign(&policy, &claims).await?;
+        let cose = self
+            .policy
+            .sign(&policy, &member, &results, &claims)
+            .await?;
         let verified = policy
             .signing_keys
             .verify(&cose, csgn::Kind::Credential, now)
             .map_err(|_| Error::Signing)?;
-        let signed: CredentialClaims =
+        let signed: cplc::Credential =
             serde_json::from_slice(verified.payload()).map_err(|_| Error::Signing)?;
-        if signed != claims
+        if signed != claims.payload()?
             || verified.key_id().as_bytes().as_slice() != claims.key_id
             || verified.issued_at() != claims.issued
-            || verified.valid_until() != claims.valid_until
+            || verified.valid_until() > claims.valid_until
         {
             return Err(Error::Signing);
         }
+        claims.valid_until = verified.valid_until();
         Ok(Outcome::Issued(Box::new(IssuedCredential { claims, cose })))
     }
 
@@ -218,9 +224,7 @@ impl<S: Storage, M: Membership, G: Gatekeeping, P: Policy> Community<S, M, G, P>
 
     fn validate_policy(&self, policy: &PolicySnapshot, now: u64) -> Result<()> {
         let community = community_text(&self.community)?;
-        if policy.rules.community != community
-            || policy.signing_keys.issuer() != format!("cmnt:{community}")
-        {
+        if policy.rules.community != community || policy.signing_keys.issuer() != community {
             return Err(Error::Scope);
         }
         if policy.rules.revision == 0
@@ -299,6 +303,7 @@ impl<S: Storage, M: Membership, G: Gatekeeping, P: Policy> Community<S, M, G, P>
             handle: member.handle.clone(),
             gates,
             pins: member.pins.clone(),
+            devices: member.devices.clone(),
             schema_version: policy.schema_version,
             policy_epoch: policy.rules.policy_epoch,
             issued: now,
