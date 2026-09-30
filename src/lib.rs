@@ -6,12 +6,13 @@
 
 pub mod adapters;
 mod community;
-pub mod ports;
 pub mod storage;
 mod types;
 
-pub use community::{Challenge, Community};
+pub use community::{Admission, Challenge, Community, Config, Parts, VerifiedPassport};
 pub use types::*;
+/// Exact protocol types of the composed facades.
+pub use {cgts, cmbr, cplc};
 
 /// Redacted integration errors; no upstream request/proof/subject is attached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

@@ -1,139 +1,132 @@
 # cmnt implemented contract
 
-Community facade of cvld v0.4: compose cmbr (membership), cgts (community gates)
-and cplc (rulebook, schema, community signing). Verify passport presentations
-with cpsd; the community pseudonym is the member ID. Issue an Ed25519 COSE_Sign1
-credential, at most one day for new members and 30 days for established members,
-shortened by gate expiries and other authoritative validity bounds.
+Community composition under `cvld → cmnt`, over cmbr, cgts and cplc. Native Rust,
+FSL-1.1-ALv2, development API. No cryptography, policy evaluator, membership state
+machine, lifetime calculator, gate adapter or signing store is implemented here.
 
-Rust native server library, FSL-1.1-ALv2. No own crypto, login dates, request logs,
-raw evidence, profile values, pin salts or stored member credentials. One physical
-database per community through crlt, with a community key in every table and
-indexed application queries. Global data/keys/databases remain separate.
-No registry publication; Rust validation runs only on GitHub Actions.
+## Ownership and verified inputs
 
-## Composition
+cplc alone decides admission through crbk over its authenticated settings and
+cgts's bound `CheckedGates`. cmbr owns passkeys, enrolment, handles, v2 pins,
+probation and membership leases. cgts owns gate verification, retained facts,
+action-bound receipts and the unconditional legal veto. cpsd owns blind passport
+proofs, authenticated wallet requests and atomic replay prevention. csgn owns
+COSE signing; crlt owns database capabilities and indexed transactions.
 
-`Community<S, M, G, P>` consumes fixed community capabilities through small
-Storage, Membership, Gatekeeping and Policy traits. cmbr/cgts/cplc initially had
-no usable APIs. cplc is now directly integrated. CI proved that cmbr/cgts cannot
-coexist with cpsd: cpsd pins zeroize =1.8.2, cpns underneath both requires ^1.9.
-The explicitly authorized local Membership/Gatekeeping ports remain until those
-upstream requirements align. These ports are trusted Rust interfaces, not RPC bodies.
+`Parts` contains the actual three facades. Configure cmbr and cplc with
+`community.admit`, one canonical community and one shared database. The optional
+`SharedRulebook` adapter shares an actual crbk store; cmnt never resolves it or
+calls crbk's decision function. `PolicySnapshot` is a read-only UI view, not an
+admission capability. Caller-built snapshots, pseudonyms and raw gate metadata
+cannot substitute for verified admission inputs.
 
-Membership binds the verified pseudonym to the authenticated member session and
-supplies current enrolment, pins, state/revision, reserved handle, trusted standing
-and authorized public device keys. It revalidates the complete member and delegates
-fresh admission and coarse lease extension. The service serializes all writers
-through the complete issuance operation, across processes as well as tasks. No
-per-member admission or login timestamp is introduced; renewal never establishes
-standing.
+`begin` returns a server-held challenge. Send `signed_request()` to the wallet.
+The wallet verifies the COSE request against the authenticated keys of its
+selected community origin before presenting. Unsigned requests cannot be passed
+to cpsd's wallet API. `verify` delegates to `cgts::verify_passport`, consuming the
+actual cpsd challenge and producing an opaque witness. `begin_registration`
+consumes that witness at the same trusted time and starts cmbr's WebAuthn flow.
+The community-local UUID is service-generated; the member identity is the real
+community pseudonym. Registration alone grants no access.
 
-Gatekeeping runs the actual community gates and unconditional legal veto. Raw
-inputs remain with typed leaf sessions. cmnt rejects global results from this port,
-foreign bindings, expired/future/invalid metadata and duplicate gate/provider
-pairs. Failed/expired checks should be omitted so crbk returns missing requirements.
-A legal veto overrides any permissive policy. The port must delegate to real leaves;
-no accepting production gate implementation is provided.
+`finish` requires a fresh proof plus a real cpky authentication, authorized public
+device keys and a coarse lease. It checks the authentication's current passkey
+and pseudonym. No caller-supplied membership class exists. `finish_with` can run
+additional checks through the real cgts instance. Each receipt binds community,
+subject, action, exact settings content/publication, effective epoch and time.
+Global facts come only from cgts's verified passport witness. cgts checks legal
+state and combines fresh and retained facts; cmnt never manufactures gate results.
 
-`CplcPolicy` owns serialized access to the real cplc issuer. It loads an effective
-crbk revision from the same rulebook store used by cplc, obtains current schema,
-effective epoch and public keys, and combines them with an authenticated global
-passport schedule and explicit freshness deadline. Global/community epochs remain
-distinct. On issuance it rechecks expected policy/schema/key under the same mutex
-and calls cplc::issue, which evaluates policy again and durably delegates signing
-to csgn. cmnt implements no signing or retention engine.
+cplc validates the current verified settings and makes the decision. A negative
+explicit admission attempt delegates lapse to cmbr and returns `Missing`.
+A legal veto returns `Vetoed`; failures are errors. Merely calling the cmbr lobby
+or cmnt `snapshot` does not mutate membership or publish anything. On allowance,
+cmbr commits admission, and cplc issues while holding cmbr's per-member source
+lease. Pending, lapsed, released, legally restricted or unacknowledged-revocation
+members cannot obtain a credential even under a gate-free policy.
 
-## Admission sequence
+The wire payload is `cplc::Credential`. cmnt verifies it through csgn and returns
+a `CredentialClaims` view. Global gates, global identifiers, proof times and
+passport bytes never enter this credential. Pin values and salts remain on the
+device; only context-bound v2 fingerprints enter permanent community storage.
 
-1. `new` checks component scopes, canonical UTF-8 community, a nonempty trusted
-   global issuer key ring and an explicit challenge lifetime of 1–300 seconds.
-2. `begin` loads effective policy and reserves a cpsd common-expiry request. The
-   deadline is strictly before passport/policy expiry. An opaque Challenge stays
-   in server memory; only its cpsd request goes to the holder. The service binds
-   that exchange to its authenticated community session and limits capacity/rate.
-3. `finish` checks time/scope and policy freshness, verifies the BBS proof and
-   atomically consumes its nonce through cpsd. Only then does it use exactly
-   Pseudonym::to_hex() as the member ID. Invalid proofs consume nothing.
-4. Membership is loaded, gates run and legal veto checked. Only global gate names
-   proved by the registered passport request are rebound to that pseudonym, with
-   provider label `cpsd`. No global holder ID or raw provider evidence is exposed.
-5. crbk evaluates only `community.admit`; members cannot select an easier action.
-   Missing/disabled actions, gates and providers fail closed. Configure cmbr and
-   cplc with the same action. Missing requirements return to the lobby. Global
-   proofs disclose no proof issuance time, so cannot satisfy maximum-proof-age
-   requirements by inventing a check/login time.
-6. The expiry ceiling is the minimum of standing cap, signer maximum validity,
-   passport expiry, policy freshness and every returned gate expiry. cplc can
-   shorten further for proof age or scheduled policy activation. Community expiry
-   is exclusive, conservatively stricter than cpsd's inclusive expiry.
-7. Membership admission/lease commits before cplc issuance. Policy is checked again.
-   cmnt verifies the returned COSE signature, kind, community issuer, active key,
-   payload and protected times. Only a matching credential within the expiry
-   ceiling is returned. No signed response or proof is cached.
+## Lifetimes, no return and revocation
 
-The current cplc API has no explicit expiry-ceiling argument. Its adapter requires
-at least one proved global gate, shortening that transient assertion's validity
-before calling cplc. Shortening is conservative; no gate is fabricated, no expiry
-extended, and community gate expiries remain intact. A gate-free global policy is
-refused until an upstream explicit ceiling API is available.
+crbk settings supply the defaults: one day for new members, thirty days for
+established members, fourteen days of probation. cmbr stores the probation end
+at UTC-day granularity, never resets it on renewal and deletes it once passed.
+cplc derives standing from that stored state and caps issuance at current gate
+and passport expiry, membership lease, signer limits and announced activation.
+cmbr bounds service-selected leases to its configured maximum of 1–24 months.
+Stored and signed membership times are day-rounded. Short single-use protocol
+challenge deadlines remain precise (at most five minutes); announced policy
+cutoffs retain protocol precision. No login time or request history is stored.
 
-A valid consumed proof cannot be reused after denial, downstream failure or lost
-response. Request a new challenge. Losing the server-held Challenge on restart
-also requires a new request. Errors expose fixed categories without input values.
-Time is a service-supplied snapshot, not a library clock. The service owns session
-expiry/device removal, authenticated policy/key distribution and serialization of
-membership/gate/policy changes with complete issuance. There is no distributed
-transaction: a signing failure may leave admission/lease committed, but no
-credential is returned. Reconcile uncertain remote outcomes; do not blindly retry
-mutations or bypass cmbr's recovery procedure.
+**NO RETURN:** registration expiry and loss/revocation of all passkeys permanently
+prevent the same person from rejoining this community. A new UUID does not evade
+the pseudonym tombstone. Burned global uniqueness fingerprints never become
+available to another person. The cmbr lobby warns before registration expiry and
+recommends a second device or synced passkey when only one key is registered.
+Every authenticated operation rechecks the exact passkey; a revoked key's saved
+session stops working immediately.
 
-## Credential wire format
+Membership changes create a durable generation-tagged revocation outbox.
+`flush_revocations(now)` advances cplc's community epoch, publishes settings and
+revocations, then acknowledges the observed generations. Signing/publication
+failure leaves events pending. A crash may repeat the conservative epoch bump;
+it cannot acknowledge an unpublished revocation. `begin` also drains a bounded
+batch. The service must call/drain this relay after membership maintenance or
+revocation and distribute the new epoch to consumers. Outbox entries fence new
+issuance until acknowledged. An offline consumer needs fresh epoch/revocation
+metadata; cryptographic verification alone cannot recall a previously issued
+credential. Already valid credentials remain bounded by their signed expiry.
 
-Use cplc::Credential inside csgn's tagged COSE_Sign1, kind Credential, issuer equal
-to the canonical community. JSON fields are community, member (the pseudonym),
-handle, schema_version, policy_epoch, community gates (gate/provider/valid_until),
-pins (field/fingerprint) and authorized public device keys. Protected COSE headers
-supply issued time, exclusive expiry and key ID. Global gate disclosures and
-transient proof times are omitted. cplc owns validation and serialization.
+Global suspension is separate: after authenticating cglb's signed public status,
+the service calls `update_passport_policy`. This refuses epoch rollback and
+serializes updates with local signing. Changed global metadata invalidates old
+challenges; fresh challenges reject old-epoch passports. A suspended person
+cannot get a replacement global passport, so community renewal fails closed.
+The global service never needs a community membership list. Issuer key updates,
+canonical routing, configuration freshness and device-key authorization remain
+service responsibilities. Configuration expiry prevents new challenges/issuance;
+it is not an independently fabricated gate-expiry assertion.
 
-CredentialClaims is a verified convenience view combining that payload and COSE
-headers; its version field describes this view and is not an extra wire field.
-Consumers must verify signatures with authenticated keys and fresh policy epochs;
-parsing a key ring cannot establish trust. Individual early global revocation is
-not implemented by cpsd v1; epoch and expiry limits continue to apply.
+## Storage, concurrency and recovery
 
-## Storage
+Use one physical database per community and one `crlt::Db`. Append
+`cmbr::SCHEMAS` (including clbs), cgts, crbk, cplc, csgn and `storage::SCHEMA`
+exactly once to the complete migration history; reuse that history on reopen.
+cmnt adds no tables. Memory and libSQL challenge stores delegate to cpsd.
+Challenges contain anonymous nonce/binding/deadline only. Index plans, namespaces,
+capacity, missing-schema failures and restart replay protection are tested.
 
-`Storage::challenges` supplies shared atomic leaf state. MemoryStorage and
-LibsqlStorage wrap cpsd's real implementations, not duplicate replay logic.
-SCHEMA is the cpsd challenge DDL; append it once to the service migration list.
-Run the complete migration history on each opened crlt handle, including after
-restart; this also registers the schema used by crlt's query enforcement.
-Only outstanding random nonces, request digests and deadlines persist. The primary
-key and expiry index lead with community_id, scoped as cpsd/<hex community bytes>.
-Successful consumption deletes the row; prune removes expired rows. Capacity is
-bounded, storage loss fails closed, and check_indexes exercises every leaf plan.
-No extra cmnt table is necessary. Sibling facades retain only their own current
-state under their respective contracts.
+Slow gate/provider checks execute outside the policy mutex. The current settings
+are checked again before committing admission. cmbr serializes per member and
+its source guard survives through signing. There is no extra community issuance
+mutex or durable busy flag. cplc/csgn fences competing persistent signers.
+Admission and signing are separate commits: a signing failure can leave a member
+admitted, but returns no credential. Retry with a fresh presentation. Cancellation
+cannot leave a cmbr writer permanently busy; unused anonymous challenges expire.
 
-Upstream crlt pins currently differ: cpsd/crbk use 9c076b1, newer facades 6b94dac.
-Concrete adapters therefore require matching Rust handles to one physical DB.
-Align upstream pins for one shared pool; no leaf source is vendored or patched.
-Backups/WAL retention and disabling SQL/HTTP/request-body tracing belong to the
-service. Global issuer storage never shares the community database.
+No credentials, presentations, raw gates, personal identifiers, profile values,
+salts or request logs are persisted by cmnt. Do not enable request/body tracing.
+Errors are redacted. The public global API exposes signed aggregate policy
+metadata, not global account records or uniqueness fingerprints.
 
-## Validation and boundaries
+## Verification and limits
 
-Stable formatting, strict all-target Clippy and real tests run on GitHub Actions.
-Tests cover BBS passports, crgs register operations, crbk decisions, COSE, the actual
-cplc adapter, replay/concurrency, scope/epoch/lifetime boundaries, failures,
-libSQL persistence/isolation/capacity/indexes and optional Turso. Development gates
-exist only in tests. Fault fixtures exercise external ports without replacing
-cmnt or leaf cryptographic/storage logic. Live Turso skips unless both environment
-credentials are nonempty; public CI contains neither credential.
+Tests compose real BBS proofs, authenticated wallet requests, software WebAuthn,
+cnrl enrolment, retained/transient gates, v2 pins, crbk decisions and Ed25519 COSE
+through all three facades on libSQL. They cover replay/races, policy/schema/key
+changes, wrong identity/context, legal veto, adaptive expiry, probation, lapse,
+release, restart, revocation forwarding and global suspension blocking renewal.
+Optional Turso checks skip without explicitly supplied disposable credentials.
+GitHub Actions checks formatting, Clippy, tests and a single exact revision of
+every Corbet dependency. Cargo runs only on CI.
 
-This crate does not supply the cvld transport, registration UI, pairing protocol,
-establishment policy, global suspension accumulator or distributed writer lock.
-The service must provide those boundaries; the selected leaves are not a claim
-of independent cryptographic audit or production certification.
+cblc's punishment/change-token/record extensions are not yet proven. The actual
+cgts and cmbr adapters therefore refuse those operations; they never change a
+pin without a proven spent token. Positive extension/spend integration remains
+blocked on the leaf proof work. This facade has no production test gate; cglb's
+explicit development feature is absent from release builds and refused in
+production mode. Test fixtures are compiled only into integration test binaries.

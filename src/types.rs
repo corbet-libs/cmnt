@@ -10,37 +10,9 @@ pub const ADMISSION_ACTION: &str = "community.admit";
 /// Provider label for globally verified proof metadata, not a raw gate provider.
 pub const PASSPORT_PROVIDER: &str = "cpsd";
 /// Maximum lifetime for a new member, in seconds.
-pub const NEW_MEMBER_LIFETIME: u64 = 86_400;
+pub const NEW_MEMBER_LIFETIME: u64 = cplc::NEW_MEMBER_VALIDITY;
 /// Maximum lifetime for an established member, in seconds.
-pub const ESTABLISHED_MEMBER_LIFETIME: u64 = 30 * NEW_MEMBER_LIFETIME;
-
-/// Standing supplied by membership policy, never inferred from renewal count.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Standing {
-    /// Probationary or otherwise not established.
-    New,
-    /// Established according to the trusted membership facade.
-    Established,
-}
-
-/// Current membership state. No admission/login dates or history.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Member {
-    /// Exact lowercase hexadecimal `cpsd::Pseudonym::to_hex()` value.
-    pub id: String,
-    /// Handle already validated/reserved by membership leaves.
-    pub handle: String,
-    /// State resolved by `cmbr`/`cnrl`.
-    pub state: crbk::MembershipState,
-    /// Trusted standing; renewal alone never changes it.
-    pub standing: Standing,
-    /// Opaque revision for stale-member comparison before admission.
-    pub revision: u64,
-    /// Sealed field fingerprints only; never values or salts.
-    pub pins: BTreeMap<String, [u8; 32]>,
-    /// Authorized public device keys, from the member's authenticated session.
-    pub devices: Vec<[u8; 32]>,
-}
+pub const ESTABLISHED_MEMBER_LIFETIME: u64 = cplc::ESTABLISHED_MEMBER_VALIDITY;
 
 /// Authenticated common-expiry passport policy from the global level.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,15 +51,6 @@ impl PolicySnapshot {
             && self.valid_until == other.valid_until
             && self.signing_keys.to_cbor() == other.signing_keys.to_cbor()
     }
-}
-
-/// Community gate results plus an unconditional legal veto.
-#[derive(Clone, Default)]
-pub struct GateReport {
-    /// Already verified metadata, bound to this member and community.
-    pub results: Vec<crbk::GateResult>,
-    /// A verified legal order prohibits admission regardless of rulebook policy.
-    pub veto: bool,
 }
 
 /// A community gate recorded in the credential. Proof time is deliberately absent.

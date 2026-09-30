@@ -1,96 +1,179 @@
-use std::collections::BTreeSet;
-
+use chrono::{DateTime, Datelike};
 use cpsd::{
     ChallengeStore, CommunityId, IssuerPublicKey, Presentation, PresentationRequest, Verifier,
     rand::{CryptoRng, RngCore},
 };
+use tokio::sync::Mutex;
 
-use crate::{
-    ports::{Gatekeeping, Membership, Policy},
-    storage::Storage,
-    *,
-};
+use crate::{storage::Storage, *};
 
-/// Server-held admission challenge. Only [`Self::request`] travels to the holder.
-/// Private fields prevent substituting policy or an arbitrary permissive action.
-/// Losing this transient value requires a fresh challenge, not reconstruction
-/// from untrusted client fields. No member ID or proof is retained here.
+/// Server-held admission challenge. Only the request travels to the holder.
 pub struct Challenge {
     request: PresentationRequest,
+    signed_request: Vec<u8>,
     policy: PolicySnapshot,
     not_before: u64,
 }
 
 impl Challenge {
-    /// The holder's serializable `cpsd` request; the service retains this handle.
+    /// Authenticated COSE request for the wallet; it verifies its selected origin.
+    pub fn signed_request(&self) -> &[u8] {
+        &self.signed_request
+    }
+
+    /// Serializable passport request; retain this handle on the server.
     pub fn request(&self) -> &PresentationRequest {
         &self.request
     }
 }
 
-/// Community facade with fixed, service-authorized component capabilities.
-/// Membership and gatekeeping use ports while upstream dependency pins align;
-/// the ready cplc adapter is provided in `adapters`.
-pub struct Community<S: Storage, M, G, P> {
+/// A consumed, verified passport presentation. No raw proof is retained.
+/// Use it immediately to bind a first registration to its community pseudonym.
+pub struct VerifiedPassport {
+    member_id: String,
+    witness: cgts::VerifiedPassport,
     community: CommunityId,
-    verifier: Verifier<S::Challenges>,
-    membership: M,
-    gates: G,
-    policy: P,
-    challenge_lifetime: u64,
+    policy: PolicySnapshot,
+    verified_at: u64,
 }
 
-impl<S: Storage, M: Membership, G: Gatekeeping, P: Policy> Community<S, M, G, P> {
-    /// Compose one community. `challenge_lifetime` is explicit server policy and
-    /// must be positive and at most five minutes. Keys are authenticated global
-    /// issuer keys; none may come from the member's presentation.
+impl VerifiedPassport {
+    /// Verified canonical community pseudonym, also the cmbr member ID.
+    pub fn member_id(&self) -> &str {
+        &self.member_id
+    }
+}
+
+/// Authenticated service configuration, never taken from the holder's request.
+#[derive(Clone)]
+pub struct Config {
+    /// Global common-expiry epoch, authenticated from the global issuer.
+    pub passport: PassportPolicy,
+    /// Exclusive freshness deadline for community configuration.
+    pub valid_until: u64,
+    /// Positive single-use challenge lifetime, at most five minutes.
+    pub challenge_lifetime: u64,
+}
+
+/// The three real facades, each retaining its own responsibility.
+/// All stores must use one physical community database and the same action.
+pub struct Parts<M, L, C, G, A, R, P, K> {
+    /// Owns passkeys, enrolment, handles, pins, leases, lapse and release.
+    pub membership: cmbr::Membership<M, L, C>,
+    /// Owns gate execution, retained facts and the mandatory legal veto.
+    pub gates: cgts::Gatekeeper<G, A>,
+    /// Owns policy decisions, schema, credential format, lifetimes and signing.
+    pub policy: cplc::Policy<R, P, K>,
+}
+
+/// Inputs from an authenticated service session. cmbr validates the passkey
+/// authentication and its pseudonym binding. The service authorizes device keys.
+/// cmbr owns standing. Never deserialize this input.
+pub struct Admission<'a> {
+    /// A committed cpky login for the enrolled community-local user.
+    pub authentication: &'a cpky::Authentication,
+    /// Public device keys authorized by the service's device protocol.
+    pub devices: &'a [[u8; 32]],
+    /// Coarse lease end from the service's retention policy, not credential expiry.
+    pub lease: crgs::YearMonth,
+}
+
+/// Community composition over cmbr, cgts and cplc. There is no local member
+/// store, gate engine, policy evaluator, lifetime calculator or signer.
+pub struct Community<S: Storage, M, L, C, G, A, R, P, K> {
+    community: CommunityId,
+    verifier: Verifier<S::Challenges>,
+    membership: cmbr::Membership<M, L, C>,
+    gates: cgts::Gatekeeper<G, A>,
+    policy: Mutex<cplc::Policy<R, P, K>>,
+    config: std::sync::RwLock<Config>,
+}
+
+impl<S, M, L, C, G, A, R, P, K> Community<S, M, L, C, G, A, R, P, K>
+where
+    S: Storage,
+    M: cmbr::Storage + Send + Sync + 'static,
+    L: clbs::Verifier + Send + Sync + 'static,
+    C: clbs::Clock + Send + Sync + 'static,
+    G: cgts::Storage,
+    A: cgts::LegalVeto,
+    R: crbk::Storage,
+    P: cplc::Storage,
+    K: csgn::Store,
+{
+    /// Compose actual community facades. Configure cmbr/cplc with
+    /// [`ADMISSION_ACTION`], and share the rulebook via `SharedRulebook`.
+    /// Global issuer keys and the common epoch schedule must be authenticated.
     pub fn new(
         storage: S,
         issuer_keys: Vec<IssuerPublicKey>,
-        membership: M,
-        gates: G,
-        policy: P,
-        challenge_lifetime: u64,
+        parts: Parts<M, L, C, G, A, R, P, K>,
+        config: Config,
     ) -> Result<Self> {
         let store = storage.challenges();
         let community = store.community().clone();
-        community_text(&community)?;
-        if membership.community() != &community
-            || gates.community() != &community
-            || policy.community() != &community
-        {
+        let name = community_text(&community)?;
+        if parts.policy.key_ring().map_err(|_| Error::Policy)?.issuer() != name {
             return Err(Error::Scope);
         }
-        if challenge_lifetime == 0 || challenge_lifetime > 300 {
+        if config.challenge_lifetime == 0 || config.challenge_lifetime > 300 {
             return Err(Error::Time);
         }
         if issuer_keys.is_empty() {
             return Err(Error::Passport);
         }
+        if config.passport.gates.is_empty() || !config.passport.valid_until.is_multiple_of(86_400) {
+            return Err(Error::Policy);
+        }
         Ok(Self {
             community,
             verifier: Verifier::new(store, issuer_keys)?,
-            membership,
-            gates,
-            policy,
-            challenge_lifetime,
+            membership: parts.membership,
+            gates: parts.gates,
+            policy: Mutex::new(parts.policy),
+            config: std::sync::RwLock::new(config),
         })
     }
 
-    /// Immutable community identity used for pseudonym derivation and every port.
+    /// Canonical community identity for pseudonym derivation.
     pub fn community(&self) -> &CommunityId {
         &self.community
     }
 
-    /// Reserve a single-use passport request under effective admission policy.
-    /// Rate-limit before invoking this operation. The shared-epoch profile avoids
-    /// revealing individual global gate expiry dates.
-    pub async fn begin<R: RngCore + CryptoRng>(&self, rng: &mut R, now: u64) -> Result<Challenge> {
+    /// Membership owns per-person serialization and the revocation outbox.
+    pub fn membership(&self) -> &cmbr::Membership<M, L, C> {
+        &self.membership
+    }
+
+    /// Gate execution, headless steps and provider withdrawal remain with cgts.
+    pub fn gates(&self) -> &cgts::Gatekeeper<G, A> {
+        &self.gates
+    }
+
+    /// Serialize policy administration with signing. Slow gate checks run outside
+    /// this mutex; cplc fences competing persistent signer instances.
+    pub fn policy(&self) -> &Mutex<cplc::Policy<R, P, K>> {
+        &self.policy
+    }
+
+    /// Load current effective policy and authenticated public signing metadata.
+    pub async fn snapshot(&self, now: u64) -> Result<PolicySnapshot> {
         check_time(now)?;
-        let policy = self.policy.snapshot(now).await?;
-        self.validate_policy(&policy, now)?;
+        self.snapshot_locked(&*self.policy.lock().await, now).await
+    }
+
+    /// Reserve a single-use passport request. Rate-limit before this operation.
+    pub async fn begin<T: RngCore + CryptoRng>(&self, rng: &mut T, now: u64) -> Result<Challenge> {
+        self.flush_revocations(now).await?;
+        let mut signer = self.policy.lock().await;
+        let policy = self.snapshot_locked(&signer, now).await?;
+        let lifetime = self
+            .config
+            .read()
+            .map_err(|_| Error::Policy)?
+            .challenge_lifetime;
         let deadline = now
-            .checked_add(self.challenge_lifetime)
+            .checked_add(lifetime)
             .ok_or(Error::Time)?
             .min(policy.passport.valid_until - 1)
             .min(policy.valid_until - 1);
@@ -107,215 +190,375 @@ impl<S: Storage, M: Membership, G: Gatekeeping, P: Policy> Community<S, M, G, P>
                 policy.passport.valid_until,
             )
             .await?;
+        let signed_request = signer
+            .sign_presentation_request(&request, now)
+            .await
+            .map_err(|_| Error::Signing)?;
         Ok(Challenge {
             request,
+            signed_request,
             policy,
             not_before: now,
         })
     }
 
-    /// Verify a passport, consume its challenge, consult membership and community
-    /// gates, ask the rulebook, commit admission, and sign a bounded credential.
-    /// Any attempt after successful verification needs a new challenge, including
-    /// denials, downstream failures and lost responses. No credential is cached.
-    pub async fn finish<R: RngCore + CryptoRng>(
+    /// Verify and atomically consume a presentation before any membership work.
+    /// Replays, foreign scopes and changed policy fail closed.
+    pub async fn verify<T: RngCore + CryptoRng>(
         &self,
-        rng: &mut R,
+        rng: &mut T,
         challenge: &Challenge,
         presentation: &Presentation,
         now: u64,
-    ) -> Result<Outcome> {
+    ) -> Result<VerifiedPassport> {
         check_time(now)?;
         if now < challenge.not_before || challenge.request.community() != &self.community {
             return Err(Error::Passport);
         }
-        let policy = self.policy.snapshot(now).await?;
-        self.validate_policy(&policy, now)?;
+        let policy = self.snapshot(now).await?;
         if !policy.unchanged(&challenge.policy) {
             return Err(Error::Policy);
         }
-        let pseudonym = self
-            .verifier
-            .verify(
-                rng,
-                &challenge.request,
-                presentation,
-                policy.passport.epoch,
-                now,
-            )
-            .await?;
-        let member_id = pseudonym.to_hex();
-        let member = self.membership.member(&member_id).await?;
-        if member.id != member_id
-            || member.handle.is_empty()
-            || member.revision == 0
-            || member.state == crbk::MembershipState::Released
+        let witness = cgts::verify_passport(
+            &self.verifier,
+            rng,
+            &challenge.request,
+            presentation,
+            policy.passport.epoch,
+            now,
+        )
+        .await
+        .map_err(|_| Error::Passport)?;
+        Ok(VerifiedPassport {
+            member_id: witness.pseudonym().to_hex(),
+            witness,
+            community: self.community.clone(),
+            policy,
+            verified_at: now,
+        })
+    }
+
+    /// Consume a freshly verified passport and let cmbr start the passkey ceremony.
+    /// The UUID is service-generated and community-local. Resume later through
+    /// cmbr; final admission requires a new passport presentation and real login.
+    pub async fn begin_registration(
+        &self,
+        passport: VerifiedPassport,
+        user: cpky::Uuid,
+        now: u64,
+    ) -> Result<(cpky::CreationChallengeResponse, cmbr::PendingRegistration)> {
+        if passport.community != self.community || passport.verified_at != now {
+            return Err(Error::Passport);
+        }
+        if !passport.policy.unchanged(&self.snapshot(now).await?) {
+            return Err(Error::Policy);
+        }
+        self.membership
+            .begin_registration(user, &passport.member_id)
+            .await
+            .map_err(member_error)
+    }
+
+    /// Verify a fresh passport, collect cgts facts, decide through cplc, commit
+    /// cmbr admission and issue cplc's Ed25519 COSE credential through csgn.
+    pub async fn finish<T: RngCore + CryptoRng>(
+        &self,
+        rng: &mut T,
+        challenge: &Challenge,
+        presentation: &Presentation,
+        admission: Admission<'_>,
+        now: u64,
+    ) -> Result<Outcome> {
+        self.finish_with(
+            rng,
+            challenge,
+            presentation,
+            admission,
+            now,
+            async |_, _| Ok(Vec::new()),
+        )
+        .await
+    }
+
+    /// Also run transient/action-bound gates through the supplied real cgts
+    /// instance. cgts checks each receipt's subject, action, revision and time.
+    /// Raw leaf inputs stay in this server callback, never in cmnt storage.
+    pub async fn finish_with<T: RngCore + CryptoRng>(
+        &self,
+        rng: &mut T,
+        challenge: &Challenge,
+        presentation: &Presentation,
+        admission: Admission<'_>,
+        now: u64,
+        checks: impl AsyncFnOnce(
+            &cgts::Gatekeeper<G, A>,
+            cgts::Context<'_>,
+        ) -> cgts::Result<Vec<cgts::CheckedGate>>,
+    ) -> Result<Outcome> {
+        let passport = self.verify(rng, challenge, presentation, now).await?;
+        let snapshot = {
+            let mut policy = self.policy.lock().await;
+            if !passport
+                .policy
+                .unchanged(&self.snapshot_locked(&policy, now).await?)
+            {
+                return Err(Error::Policy);
+            }
+            policy
+                .verified_settings(now)
+                .await
+                .map_err(|_| Error::Policy)?
+        };
+        let auth = admission.authentication;
+        let row = match self.membership.resume(auth).await {
+            Ok(row) => row,
+            Err(cmbr::Error::Restricted) => return Ok(Outcome::Vetoed),
+            Err(error) => return Err(member_error(error)),
+        };
+        if row.community() != community_text(&self.community)?
+            || row.subject() != passport.member_id
         {
             return Err(Error::Membership);
         }
-        let report = self.gates.run(&member, &policy, now).await?;
-        if report.veto {
-            return Ok(Outcome::Vetoed);
-        }
-        let mut results = report.results;
-        self.validate_gates(&results, &member_id, now)?;
-        // These subjects are bound only after the BBS proof and single-use
-        // consumption succeed. No global holder identifier crosses the boundary.
-        results.extend(policy.passport.gates.iter().map(|gate| crbk::GateResult {
-            gate: gate.to_string(),
-            level: crbk::GateLevel::Global,
-            subject: member_id.clone(),
-            community: None,
-            provider: PASSPORT_PROVIDER.into(),
-            valid_until: policy.passport.valid_until as i64,
-            proven_at: None,
-        }));
-        let decision = policy
-            .rules
-            .may(
-                crbk::Subject {
-                    id: &member_id,
-                    membership: member.state,
-                },
-                ADMISSION_ACTION,
-                &results,
-                now as i64,
-            )
-            .map_err(|_| Error::Policy)?;
-        if !decision.allowed {
-            return Ok(Outcome::Missing(decision));
-        }
-        let mut claims = self.claims(&policy, &member, &results, now)?;
-        // Commit before publication. On signing failure the lease may already be
-        // extended; no credential escapes and standing must remain unchanged.
-        self.membership
-            .admit(&member, &policy, &results, claims.valid_until)
-            .await?;
-        let current = self.policy.snapshot(now).await?;
-        self.validate_policy(&current, now)?;
-        if !policy.unchanged(&current) {
+        let subject = crbk::Subject {
+            id: row.subject(),
+            membership: row.state().membership(),
+        };
+        let context = cgts::Context {
+            snapshot: snapshot.settings(),
+            subject: row.subject(),
+            action: ADMISSION_ACTION,
+            now: now as i64,
+        };
+        let checked = match checks(&self.gates, context).await {
+            Ok(checked) => checked,
+            Err(cgts::Error::Vetoed) => return Ok(Outcome::Vetoed),
+            Err(_) => return Err(Error::Gate),
+        };
+        let mut checked = checked;
+        checked.extend(passport.witness.gates(context).map_err(|_| Error::Gate)?);
+        let checked = match self.gates.check(context, checked).await {
+            Ok(checked) => checked,
+            Err(cgts::Error::Vetoed) => return Ok(Outcome::Vetoed),
+            Err(_) => return Err(Error::Gate),
+        };
+        let mut policy = self.policy.lock().await;
+        if !passport
+            .policy
+            .unchanged(&self.snapshot_locked(&policy, now).await?)
+        {
             return Err(Error::Policy);
         }
-        let cose = self
+        policy
+            .validate_snapshot(&snapshot, now)
+            .await
+            .map_err(|_| Error::Policy)?;
+        let decision = policy
+            .may(&snapshot, subject, ADMISSION_ACTION, &checked, now)
+            .await
+            .map_err(|_| Error::Policy)?;
+        if !decision.allowed {
+            // This explicit admission attempt may lapse an admitted row. Merely
+            // rendering the cmbr lobby never performs this transition.
+            self.membership
+                .lapse(auth, &policy, &snapshot, &checked)
+                .await
+                .map_err(member_error)?;
+            return Ok(Outcome::Missing(decision));
+        }
+        let admitted = self
+            .membership
+            .admit(auth, &policy, &snapshot, &checked, admission.lease)
+            .await
+            .map_err(member_error)?;
+        let handle = self
+            .membership
+            .handle(auth)
+            .await
+            .map_err(member_error)?
+            .ok_or(Error::Membership)?;
+        let schema = policy
+            .schema()
+            .map_err(|_| Error::Policy)?
+            .ok_or(Error::Policy)?;
+        let schema_version = schema.version;
+        let mut pins = Vec::new();
+        for field in schema.public.iter().chain(&schema.private) {
+            if let Some(pin) = self
+                .membership
+                .get_pin(auth, &field.id)
+                .await
+                .map_err(member_error)?
+            {
+                pins.push(cplc::Pin {
+                    field: field.id.clone(),
+                    fingerprint: *pin.fingerprint.as_bytes(),
+                });
+            }
+        }
+        if !passport
             .policy
-            .sign(&policy, &member, &results, &claims)
-            .await?;
+            .unchanged(&self.snapshot_locked(&policy, now).await?)
+        {
+            return Err(Error::Policy);
+        }
+        // A cmbr commit can precede a signing failure. No bytes escape on failure;
+        // retries start with a new presentation and do not change member class.
+        let cose = policy
+            .issue(
+                &self.membership,
+                cplc::CredentialRequest {
+                    subject: crbk::Subject {
+                        id: admitted.subject(),
+                        membership: admitted.state().membership(),
+                    },
+                    handle: handle.display(),
+                    schema_version,
+                    snapshot: &snapshot,
+                    gates: &checked,
+                    pins: &pins,
+                    devices: admission.devices,
+                },
+                now,
+            )
+            .await
+            .map_err(|error| match error {
+                cplc::Error::Denied(_) | cplc::Error::Revoked => Error::Policy,
+                _ => Error::Signing,
+            })?;
         let verified = policy
-            .signing_keys
+            .key_ring()
+            .map_err(|_| Error::Signing)?
             .verify(&cose, csgn::Kind::Credential, now)
             .map_err(|_| Error::Signing)?;
-        let signed: cplc::Credential =
+        let payload: cplc::Credential =
             serde_json::from_slice(verified.payload()).map_err(|_| Error::Signing)?;
-        if signed != claims.payload()?
-            || verified.key_id().as_bytes().as_slice() != claims.key_id
-            || verified.issued_at() != claims.issued
-            || verified.valid_until() > claims.valid_until
-        {
-            return Err(Error::Signing);
-        }
-        claims.valid_until = verified.valid_until();
+        let claims = CredentialClaims {
+            version: 1,
+            community: payload.community,
+            member_id: payload.member,
+            handle: payload.handle,
+            gates: payload
+                .gates
+                .into_iter()
+                .map(|gate| CredentialGate {
+                    gate: gate.gate,
+                    provider: gate.provider,
+                    valid_until: gate.valid_until,
+                })
+                .collect(),
+            pins: payload
+                .pins
+                .into_iter()
+                .map(|pin| (pin.field, pin.fingerprint))
+                .collect(),
+            devices: payload.devices,
+            schema_version: payload.schema_version.into(),
+            policy_epoch: payload.policy_epoch,
+            issued: verified.issued_at(),
+            valid_until: verified.valid_until(),
+            key_id: verified.key_id().as_bytes().to_vec(),
+        };
         Ok(Outcome::Issued(Box::new(IssuedCredential { claims, cose })))
     }
 
-    /// Delete expired, outstanding anonymous challenges; never a member history.
+    /// Publish a conservative community epoch advance before acknowledging each
+    /// membership event. A crash may repeat the advance, never lose revocation.
+    /// Call after passkey revocation/maintenance; `begin` also drains this outbox.
+    pub async fn flush_revocations(&self, now: u64) -> Result<usize> {
+        check_time(now)?;
+        let mut policy = self.policy.lock().await;
+        let events = self
+            .membership
+            .revocations(256)
+            .await
+            .map_err(member_error)?;
+        if !events.is_empty() {
+            policy.bump_epoch().await.map_err(|_| Error::Policy)?;
+            policy
+                .publish(cplc::SnapshotKind::Settings, now)
+                .await
+                .map_err(|_| Error::Policy)?;
+            policy
+                .publish(cplc::SnapshotKind::Revocations, now)
+                .await
+                .map_err(|_| Error::Policy)?;
+            for event in &events {
+                self.membership
+                    .acknowledge_revocation(event)
+                    .await
+                    .map_err(member_error)?;
+            }
+        }
+        Ok(events.len())
+    }
+
+    /// Install authenticated global policy metadata after checking cglb's signed
+    /// public status. Never source this from a holder. Epoch rollback is refused;
+    /// the signing mutex excludes an update halfway through local issuance.
+    pub async fn update_passport_policy(&self, passport: PassportPolicy) -> Result<()> {
+        let _policy = self.policy.lock().await;
+        let mut config = self.config.write().map_err(|_| Error::Policy)?;
+        if passport.epoch < config.passport.epoch
+            || passport.gates.is_empty()
+            || !passport.valid_until.is_multiple_of(86_400)
+            || passport.valid_until >= cpsd::TIME_LIMIT
+        {
+            return Err(Error::Policy);
+        }
+        config.passport = passport;
+        Ok(())
+    }
+
+    /// Delete expired anonymous outstanding challenges.
     pub async fn prune(&self, now: u64) -> Result<u64> {
         check_time(now)?;
         Ok(self.verifier.prune(now).await?)
     }
 
-    fn validate_policy(&self, policy: &PolicySnapshot, now: u64) -> Result<()> {
-        let community = community_text(&self.community)?;
-        if policy.rules.community != community || policy.signing_keys.issuer() != community {
-            return Err(Error::Scope);
-        }
-        if policy.rules.revision == 0
-            || policy.schema_version == 0
-            || policy.rules.issued < 0
-            || policy.rules.issued > now as i64
-            || policy.valid_until <= now
-            || policy.valid_until >= cpsd::TIME_LIMIT
-            || policy.passport.valid_until <= now
-            || policy.passport.valid_until >= cpsd::TIME_LIMIT
-            || policy.signing_keys.active().is_none()
+    async fn snapshot_locked(
+        &self,
+        policy: &cplc::Policy<R, P, K>,
+        now: u64,
+    ) -> Result<PolicySnapshot> {
+        check_time(now)?;
+        let rules = policy.settings(now).await.map_err(|_| Error::Policy)?;
+        let config = self.config.read().map_err(|_| Error::Policy)?.clone();
+        let snapshot = PolicySnapshot {
+            rules,
+            schema_version: policy
+                .schema()
+                .map_err(|_| Error::Policy)?
+                .ok_or(Error::Policy)?
+                .version
+                .into(),
+            passport: config.passport,
+            valid_until: config.valid_until,
+            signing_keys: policy.key_ring().map_err(|_| Error::Policy)?.clone(),
+        };
+        if snapshot.passport.valid_until <= now
+            || snapshot.passport.valid_until >= cpsd::TIME_LIMIT
+            || snapshot.valid_until <= now
+            || snapshot.valid_until >= cpsd::TIME_LIMIT
         {
             return Err(Error::Policy);
         }
-        Ok(())
+        Ok(snapshot)
     }
+}
 
-    fn validate_gates(&self, results: &[crbk::GateResult], subject: &str, now: u64) -> Result<()> {
-        let community = community_text(&self.community)?;
-        let mut seen = BTreeSet::new();
-        for result in results {
-            if result.level != crbk::GateLevel::Community
-                || result.subject != subject
-                || result.community.as_deref() != Some(community)
-                || result.gate.is_empty()
-                || result.provider.is_empty()
-                || result.valid_until <= now as i64
-                || result.valid_until >= cpsd::TIME_LIMIT as i64
-                || result
-                    .proven_at
-                    .is_some_and(|time| time < 0 || time > now as i64)
-                || !seen.insert((&result.gate, &result.provider))
-            {
-                return Err(Error::Gate);
-            }
-        }
-        Ok(())
-    }
-
-    fn claims(
-        &self,
-        policy: &PolicySnapshot,
-        member: &Member,
-        results: &[crbk::GateResult],
-        now: u64,
-    ) -> Result<CredentialClaims> {
-        let cap = match member.standing {
-            Standing::New => NEW_MEMBER_LIFETIME,
-            Standing::Established => ESTABLISHED_MEMBER_LIFETIME,
-        };
-        let mut valid_until = now
-            .checked_add(cap.min(policy.signing_keys.max_validity()))
-            .ok_or(Error::Time)?
-            .min(policy.valid_until)
-            .min(policy.passport.valid_until);
-        let mut gates = Vec::new();
-        for result in results {
-            valid_until = valid_until.min(result.valid_until as u64);
-            if result.level == crbk::GateLevel::Community {
-                gates.push(CredentialGate {
-                    gate: result.gate.clone(),
-                    provider: result.provider.clone(),
-                    valid_until: result.valid_until as u64,
-                });
-            }
-        }
-        if valid_until <= now {
-            return Err(Error::Time);
-        }
-        gates.sort_by(|a, b| (&a.gate, &a.provider).cmp(&(&b.gate, &b.provider)));
-        let key = policy.signing_keys.active().ok_or(Error::Signing)?;
-        Ok(CredentialClaims {
-            version: 1,
-            community: community_text(&self.community)?.into(),
-            member_id: member.id.clone(),
-            handle: member.handle.clone(),
-            gates,
-            pins: member.pins.clone(),
-            devices: member.devices.clone(),
-            schema_version: policy.schema_version,
-            policy_epoch: policy.rules.policy_epoch,
-            issued: now,
-            valid_until,
-            key_id: key.key_id().as_bytes().to_vec(),
-        })
+fn member_error(error: cmbr::Error) -> Error {
+    match error {
+        cmbr::Error::Identity => Error::Scope,
+        _ => Error::Membership,
     }
 }
 
 fn check_time(now: u64) -> Result<()> {
-    if now == 0 || now >= cpsd::TIME_LIMIT {
+    if now == 0
+        || now >= cpsd::TIME_LIMIT
+        || DateTime::from_timestamp(now as i64, 0).is_none_or(|date| date.year() > 9999)
+    {
         return Err(Error::Time);
     }
     Ok(())
