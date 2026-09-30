@@ -200,7 +200,7 @@ pub fn rulebook() -> crbk::Rulebook {
             crbk::action_key(ADMISSION_ACTION),
             crbk::Setting {
                 value_type: crbk::SettingType::Policy,
-                nullable: false,
+                nullable: true,
                 default: serde_json::to_value(crbk::ActionPolicy {
                     all_of: vec![
                         crbk::Requirement {

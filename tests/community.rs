@@ -675,7 +675,14 @@ async fn disabled_provider_missing_action_and_global_proof_age_return_lobby_reas
                 )
                 .unwrap(),
             1 => {
-                rules = crbk::Rulebook::default();
+                // Published catalogues are immutable. Null disables the action
+                // without pretending its established definition can be deleted.
+                rules
+                    .set_community(
+                        &crbk::action_key(ADMISSION_ACTION),
+                        Some(serde_json::Value::Null),
+                    )
+                    .unwrap();
             }
             _ => {
                 let mut action = crbk::ActionPolicy::default();
