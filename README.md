@@ -66,8 +66,8 @@ Every direct cvld Git dependency is pinned by full revision in Cargo.toml.
 Serde/serde_json supply typed views, thiserror redacted errors, Tokio serialization,
 chrono calendar conversion, and tempfile real database fixtures. Tests use the
 real crgs register as well. Selected leaves retain their LGPL linking exception;
-other dependencies have permissive alternatives. Transitive balance Git leaves
-are pinned with source patches, without copying or changing their code.
+other dependencies have permissive alternatives. The CI-resolved Cargo.lock fixes transitive Git revisions, including balance
+leaves whose upstream manifests still follow main; no leaf code is copied.
 
 ## Validation
 

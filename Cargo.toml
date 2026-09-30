@@ -40,11 +40,3 @@ opt-level = 3
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
-
-# Freeze the balance leaves reached through cgts's transitive manifests.
-[patch."https://github.com/corbet-foss/cssr"]
-cssr = { git = "https://github.com/corbet-foss/cssr.git", rev = "099701e90b1829baed56f547e65d4e4f210f3016" }
-[patch."https://github.com/corbet-foss/cvfy"]
-cvfy = { git = "https://github.com/corbet-foss/cvfy.git", rev = "f121436a43a1fe6cc3e66552c0e681024566dfeb" }
-[patch."https://github.com/corbet-foss/czkp"]
-czkp = { git = "https://github.com/corbet-foss/czkp.git", rev = "2fdd165f8ca4732bad20e2726503a7e927b8054d" }
