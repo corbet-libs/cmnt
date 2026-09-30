@@ -320,6 +320,16 @@ pub async fn fixture_with<S: Storage>(
     valid_until: u64,
     storage: impl FnOnce(&crlt::Db) -> S,
 ) -> Fixture<S> {
+    fixture_with_identity(expiry, valid_until, storage, None, 7).await
+}
+
+pub async fn fixture_with_identity<S: Storage>(
+    expiry: u64,
+    valid_until: u64,
+    storage: impl FnOnce(&crlt::Db) -> S,
+    identity: Option<Passport>,
+    epoch: u64,
+) -> Fixture<S> {
     let directory = tempfile::tempdir().unwrap();
     let db = open(
         &format!("file://{}", directory.path().join("community.db").display()),
@@ -328,9 +338,14 @@ pub async fn fixture_with<S: Storage>(
     .await;
     let clock = Clock(Arc::new(AtomicI64::new(NOW as i64)));
     let mut rng = StdRng::seed_from_u64(42);
-    let passport = passport(&mut rng, expiry).await;
+    let passport = match identity {
+        Some(passport) => passport,
+        None => passport(&mut rng, expiry).await,
+    };
     let rules = rulebook();
     let (policy, _) = policies(&db, rules.clone()).await;
+    let mut configuration = config(expiry, valid_until);
+    configuration.passport.epoch = epoch;
     let engine = Community::new(
         storage(&db),
         vec![passport.issuer().clone()],
@@ -339,7 +354,7 @@ pub async fn fixture_with<S: Storage>(
             gates: gates(&db),
             policy,
         },
-        config(expiry, valid_until),
+        configuration,
     )
     .unwrap();
     let challenge = engine.begin(&mut rng, NOW).await.unwrap();

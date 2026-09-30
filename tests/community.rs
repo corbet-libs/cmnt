@@ -758,3 +758,335 @@ async fn competing_signer_fences_issuance_and_consumes_the_presentation() {
         State::Admitted
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revocation_publication_precedes_acknowledgement_and_fences_existing_credentials() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    let credential = issued(f.issue().await);
+    f.engine
+        .membership()
+        .revoke_passkey(&f.auth.authentication, f.credential_id.clone())
+        .await
+        .unwrap();
+    assert!(
+        f.engine
+            .membership()
+            .resume(&f.auth.authentication)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        f.engine.membership().revocations(10).await.unwrap().len(),
+        1
+    );
+    assert_eq!(f.engine.flush_revocations(NOW).await.unwrap(), 1);
+    assert!(
+        f.engine
+            .membership()
+            .revocations(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        f.engine.snapshot(NOW).await.unwrap().rules.policy_epoch > credential.claims.policy_epoch
+    );
+    let policy = f.engine.policy().lock().await;
+    assert!(
+        policy
+            .published(cplc::SnapshotKind::Settings, NOW)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        policy
+            .published(cplc::SnapshotKind::Revocations, NOW)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_revocation_publication_keeps_the_outbox_pending() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    issued(f.issue().await);
+    f.engine
+        .membership()
+        .revoke_passkey(&f.auth.authentication, f.credential_id.clone())
+        .await
+        .unwrap();
+    let competing = csgn::PersistentSigner::open(
+        csgn::LibsqlStore::new(f.db.community("example").unwrap()),
+        "example",
+        csgn::SecretKey::from_seed(&mut [1; 32]),
+        NOW,
+    )
+    .await
+    .unwrap();
+    assert!(f.engine.flush_revocations(NOW).await.is_err());
+    assert_eq!(
+        f.engine.membership().revocations(10).await.unwrap().len(),
+        1
+    );
+    drop(competing);
+    let signer = csgn::PersistentSigner::open(
+        csgn::LibsqlStore::new(f.db.community("example").unwrap()),
+        "example",
+        csgn::SecretKey::from_seed(&mut [1; 32]),
+        NOW,
+    )
+    .await
+    .unwrap();
+    let policy = cplc::Policy::open(
+        adapters::SharedRulebook::new(crbk::LibsqlStore::new(f.db.clone())),
+        cplc::LibsqlStore::new(&f.db, "example").unwrap(),
+        signer,
+    )
+    .await
+    .unwrap();
+    let reopened = Community::new(
+        storage::LibsqlStorage::new(&f.db, scope(), 32).unwrap(),
+        vec![f.passport.issuer().clone()],
+        Parts {
+            membership: members(&f.db, f.clock.clone()),
+            gates: gates(&f.db),
+            policy,
+        },
+        config(EXPIRY, EXPIRY),
+    )
+    .unwrap();
+    assert_eq!(reopened.flush_revocations(NOW).await.unwrap(), 1);
+    assert!(
+        reopened
+            .membership()
+            .revocations(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn slow_gate_releases_policy_mutex_and_changed_policy_refuses_its_receipt() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    let (challenge, proof) = f.proof().await;
+    let entered = tokio::sync::Notify::new();
+    let release = tokio::sync::Notify::new();
+    let mut rng = StdRng::seed_from_u64(876);
+    let finish = f.engine.finish_with(
+        &mut rng,
+        &challenge,
+        &proof,
+        f.admission(),
+        NOW,
+        async |_, _| {
+            entered.notify_one();
+            release.notified().await;
+            Ok(Vec::new())
+        },
+    );
+    let change = async {
+        entered.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), f.engine.snapshot(NOW))
+            .await
+            .unwrap()
+            .unwrap();
+        f.engine.policy().lock().await.bump_epoch().await.unwrap();
+        release.notify_one();
+    };
+    let (result, ()) = tokio::join!(finish, change);
+    assert!(matches!(result, Err(Error::Policy)));
+    assert_ne!(
+        f.engine
+            .membership()
+            .resume(&f.auth.authentication)
+            .await
+            .unwrap()
+            .state(),
+        State::Admitted
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn global_suspension_prevents_a_real_holder_from_renewing_in_the_community() {
+    // Only the external provider boundary is a fixture. Global issuer, blind
+    // wallet, signed status, community proof, membership and signing are real.
+    struct Provider;
+    impl cglb::GlobalGate for Provider {
+        fn id(&self) -> &str {
+            "global-test"
+        }
+        fn provider(&self) -> &str {
+            "external"
+        }
+        fn development_only(&self) -> bool {
+            false
+        }
+        async fn verify(
+            &self,
+            _: &cglb::CheckId,
+            _: &cglb::Subject,
+            _: &[u8],
+            _: u64,
+        ) -> cglb::Result<cglb::GateEvidence> {
+            Ok(cglb::GateEvidence {
+                valid_until: NOW + 20 * 86_400,
+                uniqueness: None,
+            })
+        }
+    }
+    let expiry = NOW + 20 * 86_400;
+    let mut rng = StdRng::seed_from_u64(911);
+    let gate = cpsd::GateId::new("global-test").unwrap();
+    let issuer = cpsd::IssuerKey::generate(
+        &mut rng,
+        cpsd::KeyId::new("issuer").unwrap(),
+        vec![gate.clone()],
+    )
+    .unwrap();
+    let signer = csgn::PersistentSigner::create(
+        csgn::MemoryStore::default(),
+        "cglb:global",
+        csgn::SecretKey::from_seed(&mut [77; 32]),
+        NOW,
+        30 * 86_400,
+    )
+    .await
+    .unwrap();
+    let mut global = cglb::Global::open(
+        cglb::storage::MemoryStore::new("global").unwrap(),
+        cpsd::MemoryStore::new(cpsd::CommunityId::new("global").unwrap(), 10).unwrap(),
+        issuer,
+        signer,
+        cglb::FingerprintKey::from_bytes(&mut [78; 32]),
+        cglb::Mode::Production,
+        cglb::Limits {
+            challenge_ttl: 60,
+            pending_capacity: 10,
+        },
+    )
+    .await
+    .unwrap();
+    let mut authority = csgn::PersistentSigner::create(
+        csgn::MemoryStore::default(),
+        "authority",
+        csgn::SecretKey::from_seed(&mut [79; 32]),
+        NOW,
+        30 * 86_400,
+    )
+    .await
+    .unwrap();
+    let policy = cglb::Policy {
+        version: 1,
+        scope: "global".into(),
+        revision: 1,
+        epoch: 1,
+        shared_expiry: expiry,
+        gates: vec![cglb::GatePolicy {
+            gate: "global-test".into(),
+            provider: "external".into(),
+            uniqueness: false,
+        }],
+    };
+    let signed = authority
+        .sign(
+            csgn::Kind::SettingsSnapshot,
+            &serde_json::to_vec(&policy).unwrap(),
+            NOW,
+            expiry,
+        )
+        .await
+        .unwrap();
+    global
+        .install_policy(&signed, authority.key_ring().unwrap(), NOW)
+        .await
+        .unwrap();
+    let who = cglb::Subject::new("person").unwrap();
+    let session = cglb::Session::authenticated(who.clone(), [80; 32]).unwrap();
+    global
+        .run_gate(
+            &Provider,
+            &who,
+            &[],
+            NOW,
+            &cglb::CheckId::generate(&mut rng),
+        )
+        .await
+        .unwrap();
+    let nonce = global
+        .challenge(&mut rng, &session, NOW, NOW + 60)
+        .await
+        .unwrap();
+    let secret = cpsd::HolderSecret::generate(&mut rng);
+    let (request, pending) =
+        cpsd::request_issue(&mut rng, &secret, global.issuer_public_key(), &nonce).unwrap();
+    let blind = global
+        .issue(&mut rng, &session, &nonce, &request, NOW)
+        .await
+        .unwrap();
+    let passport = pending.finish(&blind).unwrap();
+    let mut f = fixture_with_identity(
+        expiry,
+        expiry,
+        |db| storage::LibsqlStorage::new(db, scope(), 32).unwrap(),
+        Some(passport),
+        1,
+    )
+    .await;
+    issued(f.issue().await);
+    let (old_challenge, old_proof) = f.proof().await;
+    global
+        .suspend(&who, cglb::Suspension::Permanent, NOW)
+        .await
+        .unwrap();
+    let signed_status = global.signed_status(NOW, NOW + 86_400).await.unwrap();
+    let status = cglb::Status::verify(
+        &signed_status,
+        global.key_ring().unwrap(),
+        "global",
+        1,
+        1,
+        NOW,
+    )
+    .unwrap();
+    f.engine
+        .update_passport_policy(PassportPolicy {
+            epoch: status.epoch,
+            valid_until: status.shared_expiry,
+            gates: [gate.clone()].into(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.finish(&old_challenge, &old_proof, NOW).await,
+        Err(Error::Policy)
+    ));
+    assert!(
+        global
+            .challenge(&mut rng, &session, NOW, NOW + 60)
+            .await
+            .is_err()
+    );
+    let fresh = f.engine.begin(&mut rng, NOW).await.unwrap();
+    let origin = cpsd::AuthenticatedCommunity::from_authenticated_origin(
+        scope(),
+        f.engine.snapshot(NOW).await.unwrap().signing_keys,
+    );
+    assert!(
+        f.passport
+            .present(&mut rng, &origin, fresh.signed_request(), NOW)
+            .is_err()
+    );
+    assert!(
+        f.engine
+            .update_passport_policy(PassportPolicy {
+                epoch: 1,
+                valid_until: expiry,
+                gates: [gate].into()
+            })
+            .await
+            .is_err()
+    );
+}
