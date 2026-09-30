@@ -1,4 +1,5 @@
-//! Narrow trusted composition ports; ready facade adapters live in `adapters`.
+//! Trusted composition ports. The ready cplc adapter lives in `adapters`;
+//! cmbr/cgts await compatible transitive dependency pins (see the README).
 
 use std::future::Future;
 

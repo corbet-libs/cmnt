@@ -16,25 +16,25 @@ No registry publication; Rust validation runs only on GitHub Actions.
 
 `Community<S, M, G, P>` consumes fixed community capabilities through small
 Storage, Membership, Gatekeeping and Policy traits. cmbr/cgts/cplc initially had
-no usable APIs; after they landed, concrete adapters were added and their
-revisions pinned. These ports are trusted Rust interfaces, not public RPC bodies.
+no usable APIs. cplc is now directly integrated. CI proved that cmbr/cgts cannot
+coexist with cpsd: cpsd pins zeroize =1.8.2, cpns underneath both requires ^1.9.
+The explicitly authorized local Membership/Gatekeeping ports remain until those
+upstream requirements align. These ports are trusted Rust interfaces, not RPC bodies.
 
-`CmbrMembership` binds a real cmbr passkey authentication receipt to the verified
-pseudonym. It resumes enrolment, reads current authorized pin fields, obtains
-state/revision, compares the complete member before admission and calls cmbr's
-fresh admission evaluation and coarse lease extension. Handles come from trusted
-reserved-handle metadata, standing from membership policy, and authorized public
-device keys from the service's pairing protocol. Renewals never establish standing.
-All writers share its supplied mutex and the service serializes complete issuance
-across processes. No per-member admission or login timestamp is introduced.
+Membership binds the verified pseudonym to the authenticated member session and
+supplies current enrolment, pins, state/revision, reserved handle, trusted standing
+and authorized public device keys. It revalidates the complete member and delegates
+fresh admission and coarse lease extension. The service serializes all writers
+through the complete issuance operation, across processes as well as tasks. No
+per-member admission or login timestamp is introduced; renewal never establishes
+standing.
 
-`CgtsGatekeeping` delegates typed gate execution through its existing gatekeeper,
-collects enabled retained facts, validates attached transient CheckedGate values
-against exact member/action/revision/epoch/time through cgts, and always enforces
-the legal veto. Raw inputs remain with typed leaf sessions. cmnt rejects global
-results from this port, foreign bindings, expired/future/invalid metadata and
-duplicate gate/provider pairs. Failed/expired checks should be omitted so crbk
-can return missing requirements. A legal veto overrides any permissive policy.
+Gatekeeping runs the actual community gates and unconditional legal veto. Raw
+inputs remain with typed leaf sessions. cmnt rejects global results from this port,
+foreign bindings, expired/future/invalid metadata and duplicate gate/provider
+pairs. Failed/expired checks should be omitted so crbk returns missing requirements.
+A legal veto overrides any permissive policy. The port must delegate to real leaves;
+no accepting production gate implementation is provided.
 
 `CplcPolicy` owns serialized access to the real cplc issuer. It loads an effective
 crbk revision from the same rulebook store used by cplc, obtains current schema,
@@ -124,8 +124,8 @@ service. Global issuer storage never shares the community database.
 ## Validation and boundaries
 
 Stable formatting, strict all-target Clippy and real tests run on GitHub Actions.
-Tests cover BBS passports, crgs register operations, crbk decisions, COSE, actual
-cgts/cplc adapters, replay/concurrency, scope/epoch/lifetime boundaries, failures,
+Tests cover BBS passports, crgs register operations, crbk decisions, COSE, the actual
+cplc adapter, replay/concurrency, scope/epoch/lifetime boundaries, failures,
 libSQL persistence/isolation/capacity/indexes and optional Turso. Development gates
 exist only in tests. Fault fixtures exercise external ports without replacing
 cmnt or leaf cryptographic/storage logic. Live Turso skips unless both environment

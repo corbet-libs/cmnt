@@ -11,10 +11,7 @@ publish = false
 include = ["Cargo.toml", "src/**", "docs/**", "README.md", "LICENSE.md"]
 
 [dependencies]
-cmbr = { git = "https://github.com/corbet-libs/cmbr", rev = "23886f199b23964306e90d333cf2bdaa05a36b68" }
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 cplc = { git = "https://github.com/corbet-libs/cplc", rev = "e39d1e29272b6be0c313f57b1a7654fbfb2f9b3c" }
-cgts = { git = "https://github.com/corbet-libs/cgts", rev = "3480283816d18d7f72e3fafa21a78bb8b544e5ab" }
 tokio = { version = "1", features = ["sync"] }
 crlt = { git = "https://github.com/corbet-foss/crlt", rev = "9c076b1e4050529406df27533e12c8e0dd1fc0db" }
 cpsd = { git = "https://github.com/corbet-foss/cpsd", rev = "5aa7580b26faf10fe7f18bb041b08b5c50f49278" }
