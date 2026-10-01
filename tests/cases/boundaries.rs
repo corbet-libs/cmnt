@@ -9,13 +9,15 @@ async fn construction_refuses_inconsistent_authenticated_configuration() {
         &mut rng,
         cpsd::KeyId::new("boundary-issuer").unwrap(),
         vec![cpsd::GateId::new("global-test").unwrap()],
-    ).unwrap();
+    )
+    .unwrap();
     for case in 0..10 {
         let directory = tempfile::tempdir().unwrap();
         let db = open(
             &format!("file://{}", directory.path().join("community.db").display()),
             "",
-        ).await;
+        )
+        .await;
         let (policy, _) = policies(&db, rulebook()).await;
         let mut configuration = config(EXPIRY, EXPIRY);
         let mut keys = vec![issuer.public_key().clone()];
@@ -35,19 +37,44 @@ async fn construction_refuses_inconsistent_authenticated_configuration() {
                 },
                 Authority,
                 clock,
-            ).unwrap()
+            )
+            .unwrap()
         } else {
             members(&db, clock)
         };
         let expected = match case {
-            0 => { configuration.challenge_lifetime = 0; Error::Time }
-            1 => { configuration.challenge_lifetime = 301; Error::Time }
-            2 => { keys.clear(); Error::Passport }
-            3 => { configuration.passport.gates.clear(); Error::Policy }
-            4 => { configuration.passport.valid_until += 1; Error::Policy }
-            5 => { community = cpsd::CommunityId::new("foreign").unwrap(); Error::Scope }
-            6 => { community = cpsd::CommunityId::new([0xff]).unwrap(); Error::Scope }
-            7 => { community = cpsd::CommunityId::new(b"nul\0scope").unwrap(); Error::Scope }
+            0 => {
+                configuration.challenge_lifetime = 0;
+                Error::Time
+            }
+            1 => {
+                configuration.challenge_lifetime = 301;
+                Error::Time
+            }
+            2 => {
+                keys.clear();
+                Error::Passport
+            }
+            3 => {
+                configuration.passport.gates.clear();
+                Error::Policy
+            }
+            4 => {
+                configuration.passport.valid_until += 1;
+                Error::Policy
+            }
+            5 => {
+                community = cpsd::CommunityId::new("foreign").unwrap();
+                Error::Scope
+            }
+            6 => {
+                community = cpsd::CommunityId::new([0xff]).unwrap();
+                Error::Scope
+            }
+            7 => {
+                community = cpsd::CommunityId::new(b"nul\0scope").unwrap();
+                Error::Scope
+            }
             8 => {
                 community = cpsd::CommunityId::new(vec![b'a'; cpsd::MAX_COMMUNITY_ID_LEN]).unwrap();
                 Error::Scope
@@ -65,7 +92,10 @@ async fn construction_refuses_inconsistent_authenticated_configuration() {
             },
             configuration,
         );
-        assert!(matches!(result, Err(error) if error == expected), "case {case}");
+        assert!(
+            matches!(result, Err(error) if error == expected),
+            "case {case}"
+        );
     }
 }
 
@@ -86,7 +116,12 @@ async fn invalid_policy_refresh_never_changes_the_installed_configuration() {
             6 => passport.epoch -= 1,
             _ => unreachable!(),
         }
-        assert_eq!(f.engine.refresh_passport_policy(passport, freshness, NOW).await, Err(Error::Policy));
+        assert_eq!(
+            f.engine
+                .refresh_passport_policy(passport, freshness, NOW)
+                .await,
+            Err(Error::Policy)
+        );
         let installed = f.engine.snapshot(NOW).await.unwrap();
         assert_eq!(installed.passport, original.passport);
         assert_eq!(installed.valid_until, original.valid_until);
@@ -100,8 +135,14 @@ async fn invalid_policy_refresh_never_changes_the_installed_configuration() {
             3 => passport.valid_until = cpsd::TIME_LIMIT.div_ceil(86_400) * 86_400,
             _ => unreachable!(),
         }
-        assert_eq!(f.engine.update_passport_policy(passport).await, Err(Error::Policy));
-        assert_eq!(f.engine.snapshot(NOW).await.unwrap().passport, original.passport);
+        assert_eq!(
+            f.engine.update_passport_policy(passport).await,
+            Err(Error::Policy)
+        );
+        assert_eq!(
+            f.engine.snapshot(NOW).await.unwrap().passport,
+            original.passport
+        );
     }
     for now in [0, cpsd::TIME_LIMIT, 253_402_300_800] {
         assert!(matches!(f.engine.snapshot(now).await, Err(Error::Time)));
@@ -112,11 +153,23 @@ async fn invalid_policy_refresh_never_changes_the_installed_configuration() {
 #[tokio::test(flavor = "multi_thread")]
 async fn last_fresh_second_cannot_reserve_an_already_expired_challenge() {
     let mut f = fixture(EXPIRY, NOW + 2).await;
-    assert!(matches!(f.engine.begin(&mut f.rng, NOW + 1).await, Err(Error::Time)));
-    assert!(matches!(f.engine.snapshot(NOW + 2).await, Err(Error::Policy)));
+    assert!(matches!(
+        f.engine.begin(&mut f.rng, NOW + 1).await,
+        Err(Error::Time)
+    ));
+    assert!(matches!(
+        f.engine.snapshot(NOW + 2).await,
+        Err(Error::Policy)
+    ));
     let mut f = fixture(EXPIRY, EXPIRY + 100).await;
-    assert!(matches!(f.engine.begin(&mut f.rng, EXPIRY - 1).await, Err(Error::Time)));
-    assert!(matches!(f.engine.snapshot(EXPIRY).await, Err(Error::Policy)));
+    assert!(matches!(
+        f.engine.begin(&mut f.rng, EXPIRY - 1).await,
+        Err(Error::Time)
+    ));
+    assert!(matches!(
+        f.engine.snapshot(EXPIRY).await,
+        Err(Error::Policy)
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -131,18 +184,30 @@ async fn oversized_claim_schema_cannot_be_projected_into_an_owner_payload() {
 async fn registration_requires_the_verified_instant_and_unchanged_policy() {
     let mut f = fixture(EXPIRY, EXPIRY).await;
     let (challenge, presentation) = f.proof().await;
-    let passport = f.engine.verify(&mut f.rng, &challenge, &presentation, NOW).await.unwrap();
+    let passport = f
+        .engine
+        .verify(&mut f.rng, &challenge, &presentation, NOW)
+        .await
+        .unwrap();
     assert!(matches!(
-        f.engine.begin_registration(passport, ckyh::Uuid::from_u128(9), NOW + 1).await,
+        f.engine
+            .begin_registration(passport, ckyh::Uuid::from_u128(9), NOW + 1)
+            .await,
         Err(Error::Passport)
     ));
     let (challenge, presentation) = f.proof().await;
-    let passport = f.engine.verify(&mut f.rng, &challenge, &presentation, NOW).await.unwrap();
+    let passport = f
+        .engine
+        .verify(&mut f.rng, &challenge, &presentation, NOW)
+        .await
+        .unwrap();
     let mut changed = f.engine.snapshot(NOW).await.unwrap().passport;
     changed.epoch += 1;
     f.engine.update_passport_policy(changed).await.unwrap();
     assert!(matches!(
-        f.engine.begin_registration(passport, ckyh::Uuid::from_u128(9), NOW).await,
+        f.engine
+            .begin_registration(passport, ckyh::Uuid::from_u128(9), NOW)
+            .await,
         Err(Error::Policy)
     ));
 }
@@ -154,7 +219,13 @@ async fn an_unset_optional_field_does_not_invent_a_pin() {
     let mut optional = changed.public[0].clone();
     optional.id = "another-field".into();
     changed.private.push(optional);
-    f.engine.policy().lock().await.set_schema(changed).await.unwrap();
+    f.engine
+        .policy()
+        .lock()
+        .await
+        .set_schema(changed)
+        .await
+        .unwrap();
     let result = issued(f.issue().await);
     assert_eq!(result.claims.schema_version, 4);
     assert_eq!(result.claims.pins.len(), 1);
@@ -174,11 +245,22 @@ async fn revocation_publication_write_failure_keeps_the_membership_outbox_pendin
          CHECK (json_extract(document, '$.publications.revocation_list') IS NULL)",
     ));
     f.db.migrate(&history).await.unwrap();
-    f.engine.membership().revoke_passkey(&f.auth.authentication, f.credential_id.clone()).await.unwrap();
+    f.engine
+        .membership()
+        .revoke_passkey(&f.auth.authentication, f.credential_id.clone())
+        .await
+        .unwrap();
     assert_eq!(f.engine.flush_revocations(NOW).await, Err(Error::Policy));
-    assert_eq!(f.engine.membership().revocations(10).await.unwrap().len(), 1);
-    let rows = f.db.community("example").unwrap()
-        .query("SELECT document FROM cplc_policy WHERE slot = ?1", [1i64]).await.unwrap();
+    assert_eq!(
+        f.engine.membership().revocations(10).await.unwrap().len(),
+        1
+    );
+    let rows =
+        f.db.community("example")
+            .unwrap()
+            .query("SELECT document FROM cplc_policy WHERE slot = ?1", [1i64])
+            .await
+            .unwrap();
     let document: serde_json::Value = serde_json::from_str(rows[0].get_str(0).unwrap()).unwrap();
     assert!(document["publications"]["settings"].is_object());
     assert!(document["publications"]["revocation_list"].is_null());

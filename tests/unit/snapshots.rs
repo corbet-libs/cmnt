@@ -3,20 +3,31 @@ use crbk::Storage;
 
 async fn snapshot(seed: u8) -> PolicySnapshot {
     let now = 1_800_000_000;
-    let rules = crbk::MemoryStore::default().append(
-        "example", None,
-        crbk::Change {
-            rulebook: crbk::Rulebook::default(),
-            announced_at: now,
-            effective_at: now,
-            notice_seconds: 0,
-            policy_epoch: 1,
-        },
-    ).await.unwrap().snapshot("example", now).unwrap();
+    let rules = crbk::MemoryStore::default()
+        .append(
+            "example",
+            None,
+            crbk::Change {
+                rulebook: crbk::Rulebook::default(),
+                announced_at: now,
+                effective_at: now,
+                notice_seconds: 0,
+                policy_epoch: 1,
+            },
+        )
+        .await
+        .unwrap()
+        .snapshot("example", now)
+        .unwrap();
     let signer = csgn::PersistentSigner::create(
-        csgn::MemoryStore::default(), "example",
-        csgn::SecretKey::from_seed(&mut [seed; 32]), now as u64, 86_400,
-    ).await.unwrap();
+        csgn::MemoryStore::default(),
+        "example",
+        csgn::SecretKey::from_seed(&mut [seed; 32]),
+        now as u64,
+        86_400,
+    )
+    .await
+    .unwrap();
     PolicySnapshot {
         rules,
         schema_version: 1,
@@ -59,7 +70,16 @@ async fn every_bound_snapshot_component_invalidates_an_old_challenge_comparison(
 
 #[test]
 fn passport_storage_errors_remain_coarse_and_distinct_from_invalid_proofs() {
-    assert_eq!(crate::Error::from(cpsd::Error::Storage), crate::Error::Storage);
-    assert_eq!(crate::Error::from(cpsd::Error::StorageCapacity), crate::Error::Storage);
-    assert_eq!(crate::Error::from(cpsd::Error::InvalidIdentifier("test")), crate::Error::Passport);
+    assert_eq!(
+        crate::Error::from(cpsd::Error::Storage),
+        crate::Error::Storage
+    );
+    assert_eq!(
+        crate::Error::from(cpsd::Error::StorageCapacity),
+        crate::Error::Storage
+    );
+    assert_eq!(
+        crate::Error::from(cpsd::Error::InvalidIdentifier("test")),
+        crate::Error::Passport
+    );
 }
