@@ -41,7 +41,12 @@ async fn every_bound_snapshot_component_invalidates_an_old_challenge_comparison(
             0 => changed.rules.community = "foreign".into(),
             1 => changed.rules.revision += 1,
             2 => changed.rules.policy_epoch += 1,
-            3 => { changed.rules.content.clear(); }
+            3 => {
+                changed.rules.content.insert(
+                    crbk::gate_key(crbk::GateLevel::Global, "phone"),
+                    serde_json::Value::Bool(true),
+                );
+            }
             4 => changed.schema_version += 1,
             5 => changed.passport.epoch += 1,
             6 => changed.valid_until += 1,
