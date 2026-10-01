@@ -10,7 +10,7 @@ async fn construction_refuses_inconsistent_authenticated_configuration() {
         cpsd::KeyId::new("boundary-issuer").unwrap(),
         vec![cpsd::GateId::new("global-test").unwrap()],
     ).unwrap();
-    for case in 0..9 {
+    for case in 0..10 {
         let directory = tempfile::tempdir().unwrap();
         let db = open(
             &format!("file://{}", directory.path().join("community.db").display()),
@@ -20,6 +20,25 @@ async fn construction_refuses_inconsistent_authenticated_configuration() {
         let mut configuration = config(EXPIRY, EXPIRY);
         let mut keys = vec![issuer.public_key().clone()];
         let mut community = scope();
+        let clock = Clock(Arc::new(AtomicI64::new(NOW as i64)));
+        let membership = if case == 9 {
+            cmbr::Membership::new(
+                &db,
+                cmbr::LibsqlStorage::new(&db, "foreign").unwrap(),
+                cmbr::Config {
+                    pending_days: 2,
+                    lease_months: 12,
+                    membership_action: ADMISSION_ACTION.into(),
+                    release_period: crgs::ReleasePeriod::default(),
+                    rp_id: "members.example.org".into(),
+                    origins: vec![ckyh::Url::parse(ORIGIN).unwrap()],
+                },
+                Authority,
+                clock,
+            ).unwrap()
+        } else {
+            members(&db, clock)
+        };
         let expected = match case {
             0 => { configuration.challenge_lifetime = 0; Error::Time }
             1 => { configuration.challenge_lifetime = 301; Error::Time }
@@ -33,13 +52,14 @@ async fn construction_refuses_inconsistent_authenticated_configuration() {
                 community = cpsd::CommunityId::new(vec![b'a'; cpsd::MAX_COMMUNITY_ID_LEN]).unwrap();
                 Error::Scope
             }
+            9 => Error::Scope,
             _ => unreachable!(),
         };
         let result: Result<Engine<MemoryStorage>> = Community::new(
             MemoryStorage::new(community, 8).unwrap(),
             keys,
             Parts {
-                membership: members(&db, Clock(Arc::new(AtomicI64::new(NOW as i64)))),
+                membership,
                 gates: gates(&db),
                 policy,
             },
