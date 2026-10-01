@@ -150,7 +150,8 @@ pub enum Outcome {
 
 pub(crate) fn community_text(community: &CommunityId) -> crate::Result<&str> {
     let value = std::str::from_utf8(community.as_bytes()).map_err(|_| crate::Error::Scope)?;
-    if value.contains('\0') || value.len() > csgn::MAX_ISSUER_LEN {
+    // CommunityId already bounds bytes more tightly than the signing issuer.
+    if value.contains('\0') {
         return Err(crate::Error::Scope);
     }
     Ok(value)

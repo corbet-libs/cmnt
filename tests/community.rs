@@ -1,5 +1,7 @@
 //! Full admission through real membership, gatekeeping, policy and libSQL.
 mod support;
+#[path = "cases/boundaries.rs"]
+mod boundaries;
 
 use cmty::{storage::MemoryStorage, *};
 use cnrl::State;
