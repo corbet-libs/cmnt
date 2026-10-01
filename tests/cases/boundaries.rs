@@ -126,3 +126,38 @@ async fn oversized_claim_schema_cannot_be_projected_into_an_owner_payload() {
     claims.schema_version = u64::MAX;
     assert!(matches!(claims.payload(), Err(Error::Policy)));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn registration_requires_the_verified_instant_and_unchanged_policy() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    let (challenge, presentation) = f.proof().await;
+    let passport = f.engine.verify(&mut f.rng, &challenge, &presentation, NOW).await.unwrap();
+    assert!(matches!(
+        f.engine.begin_registration(passport, ckyh::Uuid::from_u128(9), NOW + 1).await,
+        Err(Error::Passport)
+    ));
+    let (challenge, presentation) = f.proof().await;
+    let passport = f.engine.verify(&mut f.rng, &challenge, &presentation, NOW).await.unwrap();
+    let mut changed = f.engine.snapshot(NOW).await.unwrap().passport;
+    changed.epoch += 1;
+    f.engine.update_passport_policy(changed).await.unwrap();
+    assert!(matches!(
+        f.engine.begin_registration(passport, ckyh::Uuid::from_u128(9), NOW).await,
+        Err(Error::Policy)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unset_optional_field_does_not_invent_a_pin() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    let mut changed = schema(4);
+    let mut optional = changed.public[0].clone();
+    optional.id = "another-field".into();
+    changed.private.push(optional);
+    f.engine.policy().lock().await.set_schema(changed).await.unwrap();
+    let result = issued(f.issue().await);
+    assert_eq!(result.claims.schema_version, 4);
+    assert_eq!(result.claims.pins.len(), 1);
+    assert_eq!(result.claims.pins["restricted-field"], f.fingerprint);
+    assert!(!result.claims.pins.contains_key("another-field"));
+}
