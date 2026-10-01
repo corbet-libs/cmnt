@@ -141,3 +141,13 @@ Credential assembly includes seals only for fields whose current change preset
 is restricted. Loosening a field to Free does not prevent renewal; its previous
 stored seal is retained for a later tightening and omitted from the Free-field
 credential.
+
+## Additional devices
+
+`begin_additional_registration` and `finish_additional_registration` expose cmbr's
+session-authorized, UV-required passkey enrolment for the same membership. cmbr
+and cpky own its identity, lifecycle and atomic revocation checks. The door binds
+single-use state to its initiating session. A passkey ecosystem is a device;
+there is no manual key approval or recovery identity. Removing one passkey keeps
+access through the remaining keys; losing every key permanently releases the
+membership under NO RETURN.
