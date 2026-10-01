@@ -14,7 +14,7 @@ include = ["Cargo.toml", "src/**", "docs/**", "README.md", "LICENSE.md"]
 crgs = { git = "https://github.com/corbet-foss/crgs", branch = "main" }
 clbs = { git = "https://github.com/corbet-foss/clbs", branch = "main" }
 cpns = { git = "https://github.com/corbet-foss/cpns", branch = "main" }
-cpky = { git = "https://github.com/corbet-foss/cpky", branch = "main" }
+ckyh = { git = "https://github.com/corbet-foss/ckyh", branch = "main" }
 cmbr = { git = "https://github.com/corbet-libs/cmbr", branch = "main" }
 cgts = { git = "https://github.com/corbet-libs/cgts", branch = "main" }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
