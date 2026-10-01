@@ -158,3 +158,7 @@ pub(crate) fn community_text(community: &CommunityId) -> crate::Result<&str> {
     }
     Ok(value)
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/snapshots.rs"]
+mod tests;
