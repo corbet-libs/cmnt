@@ -128,7 +128,7 @@ pub fn migrations() -> Vec<crlt::Migration<'static>> {
         ("cmbr-device-keys", cmbr::DEVICE_KEYS_SCHEMA),
     ]);
     schemas
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(i, (name, sql))| crlt::Migration::new(i as u32 + 1, name, sql))
         .collect()
