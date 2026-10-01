@@ -1000,8 +1000,8 @@ dependencies = [
  "crgs",
  "crlt",
  "csgn",
- "ed25519-dalek 2.2.0",
- "rand 0.8.8",
+ "ed25519-dalek 3.0.0",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "tempfile",
@@ -1121,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "cplc"
 version = "0.0.0"
-source = "git+https://github.com/corbet-libs/cplc?branch=main#52552fea6209838481d2576384a28888d02ba10c"
+source = "git+https://github.com/corbet-libs/cplc?branch=main#e01f5d2477bff560a543693cc1753b9ab333d7e8"
 dependencies = [
  "cbcn",
  "cgts",
