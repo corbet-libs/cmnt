@@ -1,11 +1,11 @@
 [package]
-name = "cmnt"
+name = "cmty"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Community facade of cvld: membership, gatekeeping and policy per community"
 license = "FSL-1.1-ALv2"
-repository = "https://github.com/corbet-libs/cmnt"
+repository = "https://github.com/corbet-libs/cmty"
 readme = "README.md"
 publish = false
 include = ["Cargo.toml", "src/**", "docs/**", "README.md", "LICENSE.md"]

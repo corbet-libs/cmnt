@@ -32,7 +32,7 @@ impl Challenge {
 ///
 /// ```compile_fail
 /// let raw: cpsd::Pseudonym = todo!();
-/// let verified: cmnt::VerifiedPassport = raw.into();
+/// let verified: cmty::VerifiedPassport = raw.into();
 /// ```
 pub struct VerifiedPassport {
     member_id: String,
@@ -315,7 +315,7 @@ where
 
     /// Also run transient/action-bound gates through the supplied real cgts
     /// instance. cgts checks each receipt's subject, action, revision and time.
-    /// Raw leaf inputs stay in this server callback, never in cmnt storage.
+    /// Raw leaf inputs stay in this server callback, never in cmty storage.
     pub async fn finish_with<T: RngCore + CryptoRng>(
         &self,
         rng: &mut T,

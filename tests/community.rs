@@ -1,7 +1,7 @@
 //! Full admission through real membership, gatekeeping, policy and libSQL.
 mod support;
 
-use cmnt::{storage::MemoryStorage, *};
+use cmty::{storage::MemoryStorage, *};
 use cnrl::State;
 use cpsd::rand::{SeedableRng, rngs::StdRng};
 use support::*;
