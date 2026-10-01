@@ -110,6 +110,7 @@ pub struct Fixture<S: Storage> {
     pub auth: cmbr::Login,
     pub clock: Clock,
     pub credential_id: ckyh::CredentialID,
+    pub devices: Vec<[u8; 32]>,
     pub rules: crbk::Rulebook,
     pub fingerprint: [u8; 32],
     pub config_until: u64,
@@ -454,6 +455,7 @@ pub async fn fixture_with_identity<S: Storage>(
         auth,
         clock,
         credential_id,
+        devices: DEVICES.to_vec(),
         rules,
         fingerprint,
         config_until: valid_until,
@@ -467,7 +469,7 @@ impl<S: Storage> Fixture<S> {
     pub fn admission(&self) -> Admission<'_> {
         Admission {
             authentication: &self.auth.authentication,
-            devices: &DEVICES,
+            devices: &self.devices,
             lease: crgs::YearMonth::new(2027, 9).unwrap(),
         }
     }
@@ -491,7 +493,7 @@ impl<S: Storage> Fixture<S> {
                 proof,
                 Admission {
                     authentication: &self.auth.authentication,
-                    devices: &DEVICES,
+                    devices: &self.devices,
                     lease: crgs::YearMonth::new(2027, 9).unwrap(),
                 },
                 now,
