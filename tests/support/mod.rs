@@ -117,8 +117,7 @@ pub struct Fixture<S: Storage> {
     pub directory: tempfile::TempDir,
 }
 
-pub async fn open(url: &str, token: &str) -> crlt::Db {
-    let db = crlt::Db::open(crlt::Config::new(url, token)).await.unwrap();
+pub fn migrations() -> Vec<crlt::Migration<'static>> {
     let mut schemas = cmbr::SCHEMAS.to_vec();
     schemas.extend([
         ("cgts", cgts::SCHEMA),
@@ -128,11 +127,16 @@ pub async fn open(url: &str, token: &str) -> crlt::Db {
         ("cpsd", storage::SCHEMA),
         ("cmbr-device-keys", cmbr::DEVICE_KEYS_SCHEMA),
     ]);
-    let migrations: Vec<_> = schemas
+    schemas
         .iter()
         .enumerate()
         .map(|(i, (name, sql))| crlt::Migration::new(i as u32 + 1, name, sql))
-        .collect();
+        .collect()
+}
+
+pub async fn open(url: &str, token: &str) -> crlt::Db {
+    let db = crlt::Db::open(crlt::Config::new(url, token)).await.unwrap();
+    let migrations = migrations();
     db.migrate(&migrations).await.unwrap();
     assert_eq!(db.migrate(&migrations).await.unwrap(), 0);
     db

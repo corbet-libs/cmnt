@@ -161,3 +161,25 @@ async fn an_unset_optional_field_does_not_invent_a_pin() {
     assert_eq!(result.claims.pins["restricted-field"], f.fingerprint);
     assert!(!result.claims.pins.contains_key("another-field"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revocation_publication_write_failure_keeps_the_membership_outbox_pending() {
+    let mut f = fixture(EXPIRY, EXPIRY).await;
+    issued(f.issue().await);
+    let mut history = migrations();
+    history.push(crlt::Migration::new(
+        history.len() as u32 + 1,
+        "refuse-revocation-publication",
+        "ALTER TABLE cplc_policy ADD COLUMN publication_guard INTEGER NOT NULL DEFAULT 0
+         CHECK (json_extract(document, '$.publications.revocation_list') IS NULL)",
+    ));
+    f.db.migrate(&history).await.unwrap();
+    f.engine.membership().revoke_passkey(&f.auth.authentication, f.credential_id.clone()).await.unwrap();
+    assert_eq!(f.engine.flush_revocations(NOW).await, Err(Error::Policy));
+    assert_eq!(f.engine.membership().revocations(10).await.unwrap().len(), 1);
+    let rows = f.db.community("example").unwrap()
+        .query("SELECT document FROM cplc_policy WHERE slot = ?1", [1i64]).await.unwrap();
+    let document: serde_json::Value = serde_json::from_str(rows[0].get_str(0).unwrap()).unwrap();
+    assert!(document["publications"]["settings"].is_object());
+    assert!(document["publications"]["revocation_list"].is_null());
+}
